@@ -10,7 +10,7 @@ import { WalletModal } from './components/WalletModal';
 import { ContractSettingsModal } from './components/ContractSettingsModal';
 import type { Bounty } from './types';
 import { DEMO_SCENARIOS, DEFAULT_CONTRACT_ADDRESS } from './types';
-import { setupWalletListeners } from './utils/web3';
+import { setupWalletListeners, autoCheckWalletConnection, saveWalletState } from './utils/web3';
 import { readBountiesFromChain, type GenLayerNetwork } from './utils/genlayer';
 import { ShieldCheck, Filter, Sparkles, Terminal as TerminalIcon, RefreshCw, Plus, Play, Info } from 'lucide-react';
 
@@ -20,9 +20,9 @@ export default function App() {
   const [bounties, setBounties] = useState<Bounty[]>(DEMO_SCENARIOS);
   const [filter, setFilter] = useState<'ALL' | 'OPEN' | 'EVALUATING' | 'CLOSED' | 'ESCALATED'>('ALL');
   
-  // Real Web3 Wallet State
-  const [account, setAccount] = useState<string>('0x89205A3A3b2A69De6Dbf7f01ED13B2108B2c43e7');
-  const [providerName, setProviderName] = useState<string>('Dev Key');
+  // Real Web3 Wallet State (starts clean, auto-connects to MetaMask if user authorized)
+  const [account, setAccount] = useState<string>('');
+  const [providerName, setProviderName] = useState<string>('');
   const [isWalletModalOpen, setIsWalletModalOpen] = useState(false);
 
   // GenLayer Contract & Network State
@@ -42,12 +42,22 @@ export default function App() {
   const [terminalBounty, setTerminalBounty] = useState<Bounty | null>(null);
   const [isSimulating, setIsSimulating] = useState(false);
 
-  // Setup EIP-1193 MetaMask listeners
+  // Auto-connect wallet on page load if user previously authorized MetaMask
   useEffect(() => {
+    autoCheckWalletConnection().then(({ address, providerName: prov }) => {
+      if (address) {
+        setAccount(address);
+        setProviderName(prov);
+      }
+    });
+
     const cleanup = setupWalletListeners((newAccount) => {
       if (newAccount) {
         setAccount(newAccount);
         setProviderName('MetaMask');
+      } else {
+        setAccount('');
+        setProviderName('');
       }
     });
     return cleanup;
@@ -78,6 +88,7 @@ export default function App() {
   const handleAccountConnected = (address: string, name: string) => {
     setAccount(address);
     setProviderName(name);
+    saveWalletState(address, name);
   };
 
   const handleSaveSettings = (newAddress: string, newNetwork: GenLayerNetwork) => {

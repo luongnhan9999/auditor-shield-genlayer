@@ -1,14 +1,23 @@
 import React from 'react';
 import { Lock, FileCode, Cpu, AlertTriangle } from 'lucide-react';
 import type { Bounty } from '../types';
+import { safeFormatGen } from '../utils/format';
 
 interface StatsOverviewProps {
   bounties: Bounty[];
 }
 
 export const StatsOverview: React.FC<StatsOverviewProps> = ({ bounties }) => {
-  const totalLockedGEN = bounties
-    .reduce((acc, b) => acc + BigInt(b.reward_amount || '0'), BigInt(0)) / BigInt(10 ** 18);
+  const rawSum = bounties.reduce((acc, b) => {
+    try {
+      const clean = String(b.reward_amount || '0').split('.')[0].trim();
+      return acc + (BigInt(clean) || BigInt(0));
+    } catch (e) {
+      return acc;
+    }
+  }, BigInt(0));
+
+  const totalLockedGEN = safeFormatGen(rawSum.toString());
 
   const activeBounties = bounties.filter((b) => b.status === 'OPEN').length;
   const evaluatingBounties = bounties.filter((b) => b.status === 'EVALUATING').length;

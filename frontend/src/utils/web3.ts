@@ -12,6 +12,9 @@ declare global {
   }
 }
 
+const STORAGE_ACCOUNT_KEY = 'auditorshield_wallet_account';
+const STORAGE_PROVIDER_KEY = 'auditorshield_wallet_provider';
+
 /**
  * Connect to MetaMask / GenLayer EIP-1193 Wallet
  */
@@ -30,15 +33,52 @@ export async function connectMetaMaskWallet(): Promise<{ address: string; provid
     }
 
     const providerName = window.ethereum.isMetaMask ? 'MetaMask' : 'Web3 Wallet';
-    return {
-      address: accounts[0],
-      providerName,
-    };
+    const address = accounts[0];
+
+    saveWalletState(address, providerName);
+    return { address, providerName };
   } catch (error: any) {
     if (error.code === 4001) {
       throw new Error('User rejected the wallet connection request.');
     }
     throw new Error(error.message || 'Failed to connect to MetaMask.');
+  }
+}
+
+/**
+ * Check if MetaMask is already connected on page load
+ */
+export async function autoCheckWalletConnection(): Promise<{ address: string; providerName: string }> {
+  if (typeof window === 'undefined') return { address: '', providerName: '' };
+
+  // 1. Try checking window.ethereum authorized accounts
+  if (window.ethereum) {
+    try {
+      const accounts = await window.ethereum.request({ method: 'eth_accounts' });
+      if (accounts && accounts.length > 0) {
+        const providerName = window.ethereum.isMetaMask ? 'MetaMask' : 'Web3 Wallet';
+        saveWalletState(accounts[0], providerName);
+        return { address: accounts[0], providerName };
+      }
+    } catch (e) {
+      console.warn('Auto check wallet error:', e);
+    }
+  }
+
+  // 2. Check localStorage saved state
+  const savedAddress = localStorage.getItem(STORAGE_ACCOUNT_KEY) || '';
+  const savedProvider = localStorage.getItem(STORAGE_PROVIDER_KEY) || '';
+  return { address: savedAddress, providerName: savedProvider };
+}
+
+export function saveWalletState(address: string, providerName: string) {
+  if (typeof localStorage === 'undefined') return;
+  if (address) {
+    localStorage.setItem(STORAGE_ACCOUNT_KEY, address);
+    localStorage.setItem(STORAGE_PROVIDER_KEY, providerName);
+  } else {
+    localStorage.removeItem(STORAGE_ACCOUNT_KEY);
+    localStorage.removeItem(STORAGE_PROVIDER_KEY);
   }
 }
 
@@ -49,8 +89,10 @@ export function setupWalletListeners(onAccountChange: (account: string) => void)
   if (typeof window !== 'undefined' && window.ethereum) {
     const handleAccountsChanged = (accounts: string[]) => {
       if (accounts.length > 0) {
+        saveWalletState(accounts[0], 'MetaMask');
         onAccountChange(accounts[0]);
       } else {
+        saveWalletState('', '');
         onAccountChange('');
       }
     };

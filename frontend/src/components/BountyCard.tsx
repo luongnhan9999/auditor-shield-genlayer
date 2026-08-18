@@ -1,6 +1,7 @@
 import React from 'react';
 import { ExternalLink, Cpu, CheckCircle2, XCircle, AlertCircle, HelpCircle, Terminal, ShieldCheck, ShieldAlert } from 'lucide-react';
 import type { Bounty } from '../types';
+import { safeFormatGen } from '../utils/format';
 
 interface BountyCardProps {
   bounty: Bounty;
@@ -15,7 +16,7 @@ export const BountyCard: React.FC<BountyCardProps> = ({
   onAdjudicate,
   onViewLogs,
 }) => {
-  const genAmount = (BigInt(bounty.reward_amount || '0') / BigInt(10 ** 18)).toString();
+  const genAmount = safeFormatGen(bounty.reward_amount);
 
   const getStatusBadge = () => {
     switch (bounty.status) {
