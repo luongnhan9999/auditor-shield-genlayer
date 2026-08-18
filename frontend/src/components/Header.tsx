@@ -1,5 +1,6 @@
 import React from 'react';
-import { ShieldAlert, Plus, Wallet, Code2 } from 'lucide-react';
+import { ShieldAlert, Plus, Wallet, Code2, Settings } from 'lucide-react';
+import type { GenLayerNetwork } from '../utils/genlayer';
 
 interface HeaderProps {
   onOpenCreate: () => void;
@@ -7,6 +8,9 @@ interface HeaderProps {
   account: string;
   providerName: string;
   onOpenWalletModal: () => void;
+  contractAddress: string;
+  network: GenLayerNetwork;
+  onOpenSettings: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -15,6 +19,9 @@ export const Header: React.FC<HeaderProps> = ({
   account,
   providerName,
   onOpenWalletModal,
+  contractAddress,
+  network,
+  onOpenSettings,
 }) => {
   return (
     <header className="border-b border-emerald-900/40 bg-slate-950/80 backdrop-blur-md sticky top-0 z-40 font-mono">
@@ -31,7 +38,7 @@ export const Header: React.FC<HeaderProps> = ({
                 Auditor<span className="text-emerald-400">Shield</span>
               </span>
               <span className="text-[10px] px-2 py-0.5 rounded border border-emerald-500/40 bg-emerald-950/60 text-emerald-400">
-                GenVM v0.2.16
+                {network}
               </span>
             </div>
             <p className="text-xs text-slate-400">Decentralized Bug Bounty Court</p>
@@ -40,6 +47,19 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Actions */}
         <div className="flex items-center space-x-3">
+          <button
+            onClick={onOpenSettings}
+            className="flex items-center space-x-1.5 px-3 py-1.5 text-xs rounded bg-slate-900 border border-slate-700 hover:border-emerald-500 text-slate-300 hover:text-emerald-400 transition-all"
+            title="Configure GenLayer Contract Address & RPC Network"
+          >
+            <Settings className="w-4 h-4 text-emerald-400" />
+            <span>
+              {contractAddress
+                ? `${contractAddress.substring(0, 6)}...${contractAddress.substring(contractAddress.length - 4)}`
+                : 'Config Contract'}
+            </span>
+          </button>
+
           <button
             onClick={onOpenCode}
             className="flex items-center space-x-2 px-3 py-1.5 text-xs rounded bg-slate-900 border border-slate-700 hover:border-emerald-500 text-slate-300 hover:text-emerald-400 transition-all"

@@ -7,19 +7,27 @@ import { SubmitReportModal } from './components/SubmitReportModal';
 import { TerminalAdjudicationModal } from './components/TerminalAdjudicationModal';
 import { ContractCodeModal } from './components/ContractCodeModal';
 import { WalletModal } from './components/WalletModal';
+import { ContractSettingsModal } from './components/ContractSettingsModal';
 import type { Bounty } from './types';
-import { INITIAL_BOUNTIES } from './types';
+import { DEFAULT_CONTRACT_ADDRESS } from './types';
 import { setupWalletListeners } from './utils/web3';
-import { ShieldCheck, Filter, Sparkles, Terminal as TerminalIcon } from 'lucide-react';
+import { readBountiesFromChain, type GenLayerNetwork } from './utils/genlayer';
+import { ShieldCheck, Filter, Sparkles, Terminal as TerminalIcon, Settings, RefreshCw, Plus } from 'lucide-react';
 
 export default function App() {
-  const [bounties, setBounties] = useState<Bounty[]>(INITIAL_BOUNTIES);
+  const [bounties, setBounties] = useState<Bounty[]>([]);
   const [filter, setFilter] = useState<'ALL' | 'OPEN' | 'EVALUATING' | 'CLOSED' | 'ESCALATED'>('ALL');
   
   // Real Web3 Wallet State
   const [account, setAccount] = useState<string>('');
   const [providerName, setProviderName] = useState<string>('');
   const [isWalletModalOpen, setIsWalletModalOpen] = useState(false);
+
+  // GenLayer Contract & Network State
+  const [contractAddress, setContractAddress] = useState<string>(DEFAULT_CONTRACT_ADDRESS);
+  const [network, setNetwork] = useState<GenLayerNetwork>('testnetAsimov');
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isFetchingContract, setIsFetchingContract] = useState(false);
 
   // Modals state
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -40,9 +48,32 @@ export default function App() {
     return cleanup;
   }, []);
 
+  // Fetch bounties from real GenLayer contract when contract address or network changes
+  const fetchBounties = async () => {
+    if (!contractAddress) return;
+    setIsFetchingContract(true);
+    try {
+      const data = await readBountiesFromChain(contractAddress, network);
+      setBounties(data);
+    } catch (err: any) {
+      console.warn('GenLayer Testnet RPC fetch warning:', err);
+    } finally {
+      setIsFetchingContract(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchBounties();
+  }, [contractAddress, network]);
+
   const handleAccountConnected = (address: string, name: string) => {
     setAccount(address);
     setProviderName(name);
+  };
+
+  const handleSaveSettings = (newAddress: string, newNetwork: GenLayerNetwork) => {
+    setContractAddress(newAddress);
+    setNetwork(newNetwork);
   };
 
   const handleCreateBounty = (codeUrl: string, focusArea: string, amount: string) => {
@@ -125,6 +156,9 @@ export default function App() {
         account={account}
         providerName={providerName}
         onOpenWalletModal={() => setIsWalletModalOpen(true)}
+        contractAddress={contractAddress}
+        network={network}
+        onOpenSettings={() => setIsSettingsOpen(true)}
       />
 
       {/* Main Container */}
@@ -161,6 +195,27 @@ export default function App() {
           </div>
         </div>
 
+        {/* Contract connection banner info */}
+        {!contractAddress && (
+          <div className="bg-emerald-950/40 border border-emerald-500/40 rounded-xl p-4 mb-8 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div className="flex items-start space-x-3">
+              <Settings className="w-5 h-5 text-emerald-400 flex-shrink-0 mt-0.5" />
+              <div>
+                <h4 className="text-xs font-bold text-slate-100">Ready for GenLayer Testnet Deployment</h4>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  Deploy contract via <code className="text-emerald-400">genlayer deploy contracts/AuditorShield.py</code> then click "Config Contract" to connect your deployed address.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => setIsSettingsOpen(true)}
+              className="px-4 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs rounded transition-all flex-shrink-0"
+            >
+              Set Contract Address
+            </button>
+          </div>
+        )}
+
         {/* Stats Grid */}
         <StatsOverview bounties={bounties} />
 
@@ -171,28 +226,54 @@ export default function App() {
             <span>Filter Bounties:</span>
           </div>
 
-          <div className="flex flex-wrap gap-2 text-xs">
-            {(['ALL', 'OPEN', 'EVALUATING', 'CLOSED', 'ESCALATED'] as const).map((status) => (
-              <button
-                key={status}
-                onClick={() => setFilter(status)}
-                className={`px-3 py-1.5 rounded-lg font-mono transition-all border ${
-                  filter === status
-                    ? 'bg-emerald-500 text-slate-950 font-bold border-emerald-400 shadow-[0_0_10px_rgba(16,185,129,0.3)]'
-                    : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'
-                }`}
-              >
-                {status} ({bounties.filter((b) => status === 'ALL' || b.status === status).length})
-              </button>
-            ))}
+          <div className="flex items-center space-x-3">
+            {isFetchingContract && (
+              <span className="text-xs text-cyan-400 flex items-center space-x-1">
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                <span>Syncing RPC...</span>
+              </span>
+            )}
+
+            <div className="flex flex-wrap gap-2 text-xs">
+              {(['ALL', 'OPEN', 'EVALUATING', 'CLOSED', 'ESCALATED'] as const).map((status) => (
+                <button
+                  key={status}
+                  onClick={() => setFilter(status)}
+                  className={`px-3 py-1.5 rounded-lg font-mono transition-all border ${
+                    filter === status
+                      ? 'bg-emerald-500 text-slate-950 font-bold border-emerald-400 shadow-[0_0_10px_rgba(16,185,129,0.3)]'
+                      : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'
+                  }`}
+                >
+                  {status} ({bounties.filter((b) => status === 'ALL' || b.status === status).length})
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
-        {/* Bounty Cards List */}
+        {/* Bounty Cards List / Clean Empty State */}
         <div>
           {filteredBounties.length === 0 ? (
-            <div className="bg-slate-900/40 border border-slate-800 rounded-xl p-12 text-center">
-              <p className="text-slate-400 text-sm">No bounties match the selected filter.</p>
+            <div className="bg-slate-900/40 border border-slate-800 rounded-xl p-12 text-center space-y-4">
+              <div className="w-12 h-12 rounded-full bg-slate-950 border border-slate-800 flex items-center justify-center mx-auto text-emerald-400">
+                <ShieldCheck className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-slate-200 uppercase">No Active Bounties Found</h3>
+                <p className="text-xs text-slate-400 mt-1 max-w-md mx-auto">
+                  {contractAddress
+                    ? 'No bug bounties have been posted to this GenLayer contract yet. Click "Post Bug Bounty" to lock GEN rewards!'
+                    : 'Connect your deployed GenLayer contract address or click "Post Bug Bounty" to start!'}
+                </p>
+              </div>
+              <button
+                onClick={() => setIsCreateOpen(true)}
+                className="inline-flex items-center space-x-2 px-5 py-2 text-xs font-bold text-slate-950 bg-emerald-500 hover:bg-emerald-400 rounded shadow-[0_0_15px_rgba(16,185,129,0.3)] transition-all"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Post First Bug Bounty</span>
+              </button>
             </div>
           ) : (
             filteredBounties.map((bounty) => (
@@ -217,6 +298,14 @@ export default function App() {
         onClose={() => setIsWalletModalOpen(false)}
         currentAccount={account}
         onAccountConnected={handleAccountConnected}
+      />
+
+      <ContractSettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        contractAddress={contractAddress}
+        network={network}
+        onSaveSettings={handleSaveSettings}
       />
 
       <CreateBountyModal
