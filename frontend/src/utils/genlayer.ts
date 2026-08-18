@@ -2,23 +2,23 @@ import { createClient } from 'genlayer-js';
 import { testnetAsimov, testnetBradbury, studionet, localnet } from 'genlayer-js/chains';
 import type { Bounty } from '../types';
 
-export type GenLayerNetwork = 'testnetAsimov' | 'testnetBradbury' | 'studionet' | 'localnet';
+export type GenLayerNetwork = 'studionet' | 'testnetAsimov' | 'testnetBradbury' | 'localnet';
 
 export function getGenLayerChain(network: GenLayerNetwork) {
   switch (network) {
-    case 'testnetAsimov':
-      return testnetAsimov;
-    case 'testnetBradbury':
-      return testnetBradbury;
     case 'studionet':
       return studionet;
+    case 'testnetBradbury':
+      return testnetBradbury;
     case 'localnet':
-    default:
       return localnet;
+    case 'testnetAsimov':
+    default:
+      return testnetAsimov;
   }
 }
 
-export function getGenLayerClient(network: GenLayerNetwork = 'testnetAsimov', rpcUrl?: string) {
+export function getGenLayerClient(network: GenLayerNetwork = 'studionet', rpcUrl?: string) {
   const chain = getGenLayerChain(network);
   return createClient({
     chain,
@@ -31,7 +31,7 @@ export function getGenLayerClient(network: GenLayerNetwork = 'testnetAsimov', rp
  */
 export async function readBountiesFromChain(
   contractAddress: string,
-  network: GenLayerNetwork = 'testnetAsimov',
+  network: GenLayerNetwork = 'studionet',
   rpcUrl?: string
 ): Promise<Bounty[]> {
   if (!contractAddress || contractAddress === '0x0000000000000000000000000000000000000000') {
@@ -48,8 +48,11 @@ export async function readBountiesFromChain(
 
     if (!rawResult) return [];
 
-    const jsonStr = typeof rawResult === 'string' ? rawResult : JSON.stringify(rawResult);
-    const parsed = JSON.parse(jsonStr);
+    let jsonStr = typeof rawResult === 'string' ? rawResult : JSON.stringify(rawResult);
+    if (jsonStr.startsWith('"') && jsonStr.endsWith('"')) {
+      jsonStr = JSON.parse(jsonStr);
+    }
+    const parsed = typeof jsonStr === 'string' ? JSON.parse(jsonStr) : jsonStr;
 
     if (Array.isArray(parsed)) {
       return parsed.map((item: any) => ({
@@ -69,6 +72,31 @@ export async function readBountiesFromChain(
     return [];
   } catch (error) {
     console.error('Failed to read bounties from GenLayer contract:', error);
+    throw error;
+  }
+}
+
+/**
+ * Execute contract transaction on GenLayer Testnet / StudioNet
+ */
+export async function writeContractOnChain(
+  contractAddress: string,
+  functionName: string,
+  args: any[],
+  valueWei: string = '0',
+  network: GenLayerNetwork = 'studionet'
+): Promise<string> {
+  const client = getGenLayerClient(network);
+  try {
+    const txHash = await client.writeContract({
+      address: contractAddress as `0x${string}`,
+      functionName,
+      args,
+      value: BigInt(valueWei),
+    });
+    return String(txHash);
+  } catch (error) {
+    console.warn(`GenLayer writeContract (${functionName}) warning:`, error);
     throw error;
   }
 }

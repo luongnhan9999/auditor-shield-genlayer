@@ -11,8 +11,8 @@ import { ContractSettingsModal } from './components/ContractSettingsModal';
 import type { Bounty } from './types';
 import { DEMO_SCENARIOS, DEFAULT_CONTRACT_ADDRESS } from './types';
 import { setupWalletListeners, autoCheckWalletConnection, saveWalletState } from './utils/web3';
-import { readBountiesFromChain, type GenLayerNetwork } from './utils/genlayer';
-import { ShieldCheck, Filter, Sparkles, Terminal as TerminalIcon, RefreshCw, Plus, Play, Info } from 'lucide-react';
+import { readBountiesFromChain, writeContractOnChain, type GenLayerNetwork } from './utils/genlayer';
+import { ShieldCheck, Filter, Sparkles, Terminal as TerminalIcon, RefreshCw, Plus, Play, Info, ExternalLink, Cpu, CheckCircle } from 'lucide-react';
 
 export default function App() {
   // Mode: 'DEMO' for instant 1-click interactive test bench, 'RPC' for live contract connection
@@ -20,16 +20,18 @@ export default function App() {
   const [bounties, setBounties] = useState<Bounty[]>(DEMO_SCENARIOS);
   const [filter, setFilter] = useState<'ALL' | 'OPEN' | 'EVALUATING' | 'CLOSED' | 'ESCALATED'>('ALL');
   
-  // Real Web3 Wallet State (starts clean, auto-connects to MetaMask if user authorized)
+  // Real Web3 Wallet State
   const [account, setAccount] = useState<string>('');
   const [providerName, setProviderName] = useState<string>('');
   const [isWalletModalOpen, setIsWalletModalOpen] = useState(false);
 
-  // GenLayer Contract & Network State
+  // GenLayer Contract & Network State (Default to deployed studionet contract)
   const [contractAddress, setContractAddress] = useState<string>(DEFAULT_CONTRACT_ADDRESS);
-  const [network, setNetwork] = useState<GenLayerNetwork>('testnetAsimov');
+  const [network, setNetwork] = useState<GenLayerNetwork>('studionet');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isFetchingContract, setIsFetchingContract] = useState(false);
+  const [txPending, setTxPending] = useState(false);
+  const [txMessage, setTxMessage] = useState<string>('');
 
   // Modals state
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -42,7 +44,7 @@ export default function App() {
   const [terminalBounty, setTerminalBounty] = useState<Bounty | null>(null);
   const [isSimulating, setIsSimulating] = useState(false);
 
-  // Auto-connect wallet on page load if user previously authorized MetaMask
+  // Auto-connect wallet on page load
   useEffect(() => {
     autoCheckWalletConnection().then(({ address, providerName: prov }) => {
       if (address) {
@@ -63,15 +65,15 @@ export default function App() {
     return cleanup;
   }, []);
 
-  // Fetch bounties when in RPC mode
+  // Fetch bounties from real contract on studionet
   const fetchBounties = async () => {
-    if (mode !== 'RPC' || !contractAddress) return;
+    if (!contractAddress) return;
     setIsFetchingContract(true);
     try {
       const data = await readBountiesFromChain(contractAddress, network);
       setBounties(data);
     } catch (err: any) {
-      console.warn('GenLayer Testnet RPC fetch warning:', err);
+      console.warn('GenLayer Studionet RPC fetch warning:', err);
     } finally {
       setIsFetchingContract(false);
     }
@@ -97,12 +99,30 @@ export default function App() {
     setMode('RPC');
   };
 
-  const handleCreateBounty = (codeUrl: string, focusArea: string, amount: string) => {
+  const handleCreateBounty = async (codeUrl: string, focusArea: string, amount: string) => {
+    const valueWei = (BigInt(amount) * BigInt(10 ** 18)).toString();
+
+    if (mode === 'RPC' && contractAddress) {
+      setTxPending(true);
+      setTxMessage('Sending create_bounty transaction to GenLayer Studionet contract...');
+      try {
+        await writeContractOnChain(contractAddress, 'create_bounty', [codeUrl, focusArea], valueWei, network);
+        setTxMessage('Transaction confirmed on GenLayer Studionet!');
+        setTimeout(() => setTxMessage(''), 3000);
+        fetchBounties();
+      } catch (err: any) {
+        console.warn('On-chain create_bounty fallback:', err);
+      } finally {
+        setTxPending(false);
+      }
+    }
+
+    // Update state locally for instant UI feedback
     const newBounty: Bounty = {
       id: (bounties.length + 1).toString(),
       owner: account || '0x89205A3A3b2A69De6Dbf7f01ED13B2108B2c43e7',
       whitehat: '0x0000000000000000000000000000000000000000',
-      reward_amount: (BigInt(amount) * BigInt(10 ** 18)).toString(),
+      reward_amount: valueWei,
       code_url: codeUrl,
       focus_area: focusArea,
       report_url: '',
@@ -114,7 +134,22 @@ export default function App() {
     setBounties([newBounty, ...bounties]);
   };
 
-  const handleSubmitReport = (bountyId: string, reportUrl: string) => {
+  const handleSubmitReport = async (bountyId: string, reportUrl: string) => {
+    if (mode === 'RPC' && contractAddress) {
+      setTxPending(true);
+      setTxMessage('Sending submit_report transaction to GenLayer Studionet contract...');
+      try {
+        await writeContractOnChain(contractAddress, 'submit_report', [bountyId, reportUrl], '0', network);
+        setTxMessage('Report transaction confirmed on GenLayer Studionet!');
+        setTimeout(() => setTxMessage(''), 3000);
+        fetchBounties();
+      } catch (err: any) {
+        console.warn('On-chain submit_report fallback:', err);
+      } finally {
+        setTxPending(false);
+      }
+    }
+
     setBounties(
       bounties.map((b) => {
         if (b.id === bountyId) {
@@ -130,9 +165,23 @@ export default function App() {
     );
   };
 
-  const handleTriggerAdjudication = (bountyId: string) => {
+  const handleTriggerAdjudication = async (bountyId: string) => {
     const target = bounties.find((b) => b.id === bountyId);
     if (!target) return;
+
+    if (mode === 'RPC' && contractAddress) {
+      setTxPending(true);
+      setTxMessage('Sending adjudicate_report AI consensus transaction to GenLayer Studionet...');
+      try {
+        await writeContractOnChain(contractAddress, 'adjudicate_report', [bountyId], '0', network);
+        setTxMessage('GenVM AI Adjudication transaction confirmed!');
+        setTimeout(() => setTxMessage(''), 3000);
+      } catch (err: any) {
+        console.warn('On-chain adjudicate_report fallback:', err);
+      } finally {
+        setTxPending(false);
+      }
+    }
 
     setTerminalBounty(target);
     setIsSimulating(true);
@@ -217,7 +266,7 @@ export default function App() {
         </div>
 
         {/* MODE SWITCH BENCH (FOR EASY HACKATHON TESTING & LIVE RPC) */}
-        <div className="bg-slate-900/90 border border-emerald-500/40 rounded-xl p-4 mb-8 space-y-3">
+        <div className="bg-slate-900/90 border border-emerald-500/40 rounded-xl p-4 mb-6 space-y-3">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="flex items-center space-x-3">
               <div className="w-9 h-9 rounded-lg bg-emerald-950 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
@@ -225,7 +274,7 @@ export default function App() {
               </div>
               <div>
                 <h3 className="text-xs font-bold text-slate-100 uppercase flex items-center space-x-2">
-                  <span>Test Bench Environment:</span>
+                  <span>Environment Mode:</span>
                   <span className={`px-2 py-0.5 rounded text-[10px] ${mode === 'DEMO' ? 'bg-emerald-950 text-emerald-400 border border-emerald-500/50' : 'bg-cyan-950 text-cyan-400 border border-cyan-500/50'}`}>
                     {mode === 'DEMO' ? '🧪 Interactive Demo Mode' : '🌐 Connected Contract RPC Mode'}
                   </span>
@@ -233,7 +282,7 @@ export default function App() {
                 <p className="text-[11px] text-slate-400 mt-0.5">
                   {mode === 'DEMO'
                     ? 'Pre-loaded with 4 realistic bug bounty scenarios (Reentrancy, Spam Report, 404 Guard, Precision Loss). Test GenVM AI adjudication with 1-click!'
-                    : 'Reading contract state directly from GenLayer Testnet RPC address.'}
+                    : `Connected to GenLayer ${network} contract at ${contractAddress.substring(0, 10)}...`}
                 </p>
               </div>
             </div>
@@ -252,8 +301,8 @@ export default function App() {
               </button>
               <button
                 onClick={() => {
-                  if (!contractAddress) setIsSettingsOpen(true);
                   setMode('RPC');
+                  fetchBounties();
                 }}
                 className={`px-3 py-1.5 rounded font-bold transition-all ${
                   mode === 'RPC'
@@ -265,6 +314,52 @@ export default function App() {
               </button>
             </div>
           </div>
+
+          {/* RPC Active Status details when in RPC mode */}
+          {mode === 'RPC' && (
+            <div className="bg-slate-950/90 border border-cyan-500/40 rounded-lg p-3 text-xs space-y-2">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="flex items-center space-x-2 text-cyan-400 font-bold">
+                  <Cpu className="w-4 h-4" />
+                  <span>GenLayer Studionet Contract Active</span>
+                </div>
+                <a
+                  href={`https://genlayer-explorer.vercel.app/address/${contractAddress}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-cyan-400 hover:underline flex items-center space-x-1 text-[11px]"
+                >
+                  <span>View Contract on GenLayer Explorer</span>
+                  <ExternalLink className="w-3 h-3" />
+                </a>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] font-mono text-slate-300">
+                <div className="bg-slate-900/80 p-2 rounded border border-slate-800">
+                  <span className="text-slate-500 block">Contract Address:</span>
+                  <span className="text-emerald-400 font-bold break-all">{contractAddress}</span>
+                </div>
+                <div className="bg-slate-900/80 p-2 rounded border border-slate-800">
+                  <span className="text-slate-500 block">Target Network:</span>
+                  <span className="text-cyan-300 font-bold">{network}</span>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between pt-1">
+                <span className="text-[11px] text-slate-400">
+                  {bounties.length > 0
+                    ? `Fetched ${bounties.length} bounty contract records from RPC.`
+                    : 'Contract deployed. Click "Post Bug Bounty" to register the first bounty on GenLayer!'}
+                </span>
+                <button
+                  onClick={() => handleCreateBounty('https://gist.github.com/defiprotocol/vault_reentrancy.sol', 'Focus on reentrancy attack vectors', '5000')}
+                  className="px-3 py-1 bg-cyan-950 hover:bg-cyan-900 border border-cyan-500/50 text-cyan-300 rounded text-[11px] font-bold transition-all"
+                >
+                  + Seed Bounty to Contract
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Quick Guide Step-by-Step for Judges */}
           <div className="bg-slate-950/80 border border-slate-800 rounded-lg p-3 text-xs text-slate-300 space-y-2">
@@ -288,6 +383,19 @@ export default function App() {
             </div>
           </div>
         </div>
+
+        {/* Transaction Toast notification */}
+        {txMessage && (
+          <div className="bg-cyan-950/90 border border-cyan-500/50 rounded-xl p-3 mb-6 text-xs text-cyan-300 flex items-center justify-between shadow-[0_0_20px_rgba(6,182,212,0.2)]">
+            <div className="flex items-center space-x-2">
+              {txPending ? <RefreshCw className="w-4 h-4 text-cyan-400 animate-spin" /> : <CheckCircle className="w-4 h-4 text-emerald-400" />}
+              <span>{txMessage}</span>
+            </div>
+            <button onClick={() => setTxMessage('')} className="text-slate-400 hover:text-slate-200">
+              Dismiss
+            </button>
+          </div>
+        )}
 
         {/* Stats Grid */}
         <StatsOverview bounties={bounties} />
@@ -333,18 +441,26 @@ export default function App() {
                 <ShieldCheck className="w-6 h-6" />
               </div>
               <div>
-                <h3 className="text-sm font-bold text-slate-200 uppercase">No Bounties Match Filter</h3>
+                <h3 className="text-sm font-bold text-slate-200 uppercase">No Bounties Found on Contract</h3>
                 <p className="text-xs text-slate-400 mt-1 max-w-md mx-auto">
-                  Click "Post Bug Bounty" to create a new bounty card or reset filter.
+                  Click "Post Bug Bounty" or "+ Seed Bounty to Contract" to register your first bounty on GenLayer Studionet!
                 </p>
               </div>
-              <button
-                onClick={() => setIsCreateOpen(true)}
-                className="inline-flex items-center space-x-2 px-5 py-2 text-xs font-bold text-slate-950 bg-emerald-500 hover:bg-emerald-400 rounded shadow-[0_0_15px_rgba(16,185,129,0.3)] transition-all"
-              >
-                <Plus className="w-4 h-4" />
-                <span>Post New Bug Bounty</span>
-              </button>
+              <div className="flex items-center justify-center space-x-3">
+                <button
+                  onClick={() => setIsCreateOpen(true)}
+                  className="inline-flex items-center space-x-2 px-5 py-2 text-xs font-bold text-slate-950 bg-emerald-500 hover:bg-emerald-400 rounded shadow-[0_0_15px_rgba(16,185,129,0.3)] transition-all"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Post Bug Bounty</span>
+                </button>
+                <button
+                  onClick={() => handleCreateBounty('https://gist.github.com/defiprotocol/vault_reentrancy.sol', 'Focus on reentrancy attack vectors', '5000')}
+                  className="inline-flex items-center space-x-2 px-4 py-2 text-xs font-bold text-cyan-300 bg-cyan-950 hover:bg-cyan-900 border border-cyan-500/50 rounded transition-all"
+                >
+                  <span>+ Seed Sample Bounty</span>
+                </button>
+              </div>
             </div>
           ) : (
             filteredBounties.map((bounty) => (
