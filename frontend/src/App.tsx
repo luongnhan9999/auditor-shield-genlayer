@@ -9,18 +9,20 @@ import { ContractCodeModal } from './components/ContractCodeModal';
 import { WalletModal } from './components/WalletModal';
 import { ContractSettingsModal } from './components/ContractSettingsModal';
 import type { Bounty } from './types';
-import { DEFAULT_CONTRACT_ADDRESS } from './types';
+import { DEMO_SCENARIOS, DEFAULT_CONTRACT_ADDRESS } from './types';
 import { setupWalletListeners } from './utils/web3';
 import { readBountiesFromChain, type GenLayerNetwork } from './utils/genlayer';
-import { ShieldCheck, Filter, Sparkles, Terminal as TerminalIcon, Settings, RefreshCw, Plus } from 'lucide-react';
+import { ShieldCheck, Filter, Sparkles, Terminal as TerminalIcon, RefreshCw, Plus, Play, Info } from 'lucide-react';
 
 export default function App() {
-  const [bounties, setBounties] = useState<Bounty[]>([]);
+  // Mode: 'DEMO' for instant 1-click interactive test bench, 'RPC' for live contract connection
+  const [mode, setMode] = useState<'DEMO' | 'RPC'>('DEMO');
+  const [bounties, setBounties] = useState<Bounty[]>(DEMO_SCENARIOS);
   const [filter, setFilter] = useState<'ALL' | 'OPEN' | 'EVALUATING' | 'CLOSED' | 'ESCALATED'>('ALL');
   
   // Real Web3 Wallet State
-  const [account, setAccount] = useState<string>('');
-  const [providerName, setProviderName] = useState<string>('');
+  const [account, setAccount] = useState<string>('0x89205A3A3b2A69De6Dbf7f01ED13B2108B2c43e7');
+  const [providerName, setProviderName] = useState<string>('Dev Key');
   const [isWalletModalOpen, setIsWalletModalOpen] = useState(false);
 
   // GenLayer Contract & Network State
@@ -43,14 +45,17 @@ export default function App() {
   // Setup EIP-1193 MetaMask listeners
   useEffect(() => {
     const cleanup = setupWalletListeners((newAccount) => {
-      setAccount(newAccount);
+      if (newAccount) {
+        setAccount(newAccount);
+        setProviderName('MetaMask');
+      }
     });
     return cleanup;
   }, []);
 
-  // Fetch bounties from real GenLayer contract when contract address or network changes
+  // Fetch bounties when in RPC mode
   const fetchBounties = async () => {
-    if (!contractAddress) return;
+    if (mode !== 'RPC' || !contractAddress) return;
     setIsFetchingContract(true);
     try {
       const data = await readBountiesFromChain(contractAddress, network);
@@ -63,8 +68,12 @@ export default function App() {
   };
 
   useEffect(() => {
-    fetchBounties();
-  }, [contractAddress, network]);
+    if (mode === 'RPC') {
+      fetchBounties();
+    } else {
+      setBounties(DEMO_SCENARIOS);
+    }
+  }, [mode, contractAddress, network]);
 
   const handleAccountConnected = (address: string, name: string) => {
     setAccount(address);
@@ -74,6 +83,7 @@ export default function App() {
   const handleSaveSettings = (newAddress: string, newNetwork: GenLayerNetwork) => {
     setContractAddress(newAddress);
     setNetwork(newNetwork);
+    setMode('RPC');
   };
 
   const handleCreateBounty = (codeUrl: string, focusArea: string, amount: string) => {
@@ -165,7 +175,7 @@ export default function App() {
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         
         {/* Cyberpunk Banner */}
-        <div className="relative bg-gradient-to-r from-emerald-950/60 via-slate-900 to-slate-950 border border-emerald-500/30 rounded-2xl p-6 sm:p-8 mb-8 overflow-hidden shadow-[0_0_30px_rgba(16,185,129,0.1)]">
+        <div className="relative bg-gradient-to-r from-emerald-950/60 via-slate-900 to-slate-950 border border-emerald-500/30 rounded-2xl p-6 sm:p-8 mb-6 overflow-hidden shadow-[0_0_30px_rgba(16,185,129,0.1)]">
           <div className="absolute top-0 right-0 w-96 h-96 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none"></div>
           
           <div className="relative z-10 max-w-3xl">
@@ -195,26 +205,78 @@ export default function App() {
           </div>
         </div>
 
-        {/* Contract connection banner info */}
-        {!contractAddress && (
-          <div className="bg-emerald-950/40 border border-emerald-500/40 rounded-xl p-4 mb-8 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-            <div className="flex items-start space-x-3">
-              <Settings className="w-5 h-5 text-emerald-400 flex-shrink-0 mt-0.5" />
+        {/* MODE SWITCH BENCH (FOR EASY HACKATHON TESTING & LIVE RPC) */}
+        <div className="bg-slate-900/90 border border-emerald-500/40 rounded-xl p-4 mb-8 space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center space-x-3">
+              <div className="w-9 h-9 rounded-lg bg-emerald-950 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+                <Play className="w-5 h-5 fill-emerald-400" />
+              </div>
               <div>
-                <h4 className="text-xs font-bold text-slate-100">Ready for GenLayer Testnet Deployment</h4>
+                <h3 className="text-xs font-bold text-slate-100 uppercase flex items-center space-x-2">
+                  <span>Test Bench Environment:</span>
+                  <span className={`px-2 py-0.5 rounded text-[10px] ${mode === 'DEMO' ? 'bg-emerald-950 text-emerald-400 border border-emerald-500/50' : 'bg-cyan-950 text-cyan-400 border border-cyan-500/50'}`}>
+                    {mode === 'DEMO' ? '🧪 Interactive Demo Mode' : '🌐 Connected Contract RPC Mode'}
+                  </span>
+                </h3>
                 <p className="text-[11px] text-slate-400 mt-0.5">
-                  Deploy contract via <code className="text-emerald-400">genlayer deploy contracts/AuditorShield.py</code> then click "Config Contract" to connect your deployed address.
+                  {mode === 'DEMO'
+                    ? 'Pre-loaded with 4 realistic bug bounty scenarios (Reentrancy, Spam Report, 404 Guard, Precision Loss). Test GenVM AI adjudication with 1-click!'
+                    : 'Reading contract state directly from GenLayer Testnet RPC address.'}
                 </p>
               </div>
             </div>
-            <button
-              onClick={() => setIsSettingsOpen(true)}
-              className="px-4 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs rounded transition-all flex-shrink-0"
-            >
-              Set Contract Address
-            </button>
+
+            {/* Mode Switcher Buttons */}
+            <div className="flex items-center space-x-2 bg-slate-950 p-1.5 rounded-lg border border-slate-800 text-xs">
+              <button
+                onClick={() => setMode('DEMO')}
+                className={`px-3 py-1.5 rounded font-bold transition-all ${
+                  mode === 'DEMO'
+                    ? 'bg-emerald-500 text-slate-950 shadow-[0_0_10px_rgba(16,185,129,0.3)]'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                🧪 Interactive Demo Mode
+              </button>
+              <button
+                onClick={() => {
+                  if (!contractAddress) setIsSettingsOpen(true);
+                  setMode('RPC');
+                }}
+                className={`px-3 py-1.5 rounded font-bold transition-all ${
+                  mode === 'RPC'
+                    ? 'bg-cyan-500 text-slate-950 shadow-[0_0_10px_rgba(6,182,212,0.3)]'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                🌐 Connect Contract RPC
+              </button>
+            </div>
           </div>
-        )}
+
+          {/* Quick Guide Step-by-Step for Judges */}
+          <div className="bg-slate-950/80 border border-slate-800 rounded-lg p-3 text-xs text-slate-300 space-y-2">
+            <div className="flex items-center space-x-2 text-emerald-400 font-bold">
+              <Info className="w-4 h-4" />
+              <span>How to Test AuditorShield in 3 Simple Steps:</span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-[11px]">
+              <div className="bg-slate-900/60 p-2.5 rounded border border-slate-800/80">
+                <span className="text-emerald-400 font-bold block mb-1">1. Post a Bug Bounty</span>
+                <p className="text-slate-400">Click <strong>"Post Bug Bounty"</strong> at the top right to lock GEN rewards and target code URL.</p>
+              </div>
+              <div className="bg-slate-900/60 p-2.5 rounded border border-slate-800/80">
+                <span className="text-cyan-400 font-bold block mb-1">2. Submit Report</span>
+                <p className="text-slate-400">Click <strong>"Submit Vulnerability Report"</strong> on Bounty #1 or #3 to enter whitehat exploit link.</p>
+              </div>
+              <div className="bg-slate-900/60 p-2.5 rounded border border-slate-800/80">
+                <span className="text-emerald-400 font-bold block mb-1">3. Trigger GenVM AI</span>
+                <p className="text-slate-400">Click <strong>"Trigger GenVM AI Adjudicate"</strong> to watch the live hacker terminal audit code & disburse funds!</p>
+              </div>
+            </div>
+          </div>
+        </div>
 
         {/* Stats Grid */}
         <StatsOverview bounties={bounties} />
@@ -260,11 +322,9 @@ export default function App() {
                 <ShieldCheck className="w-6 h-6" />
               </div>
               <div>
-                <h3 className="text-sm font-bold text-slate-200 uppercase">No Active Bounties Found</h3>
+                <h3 className="text-sm font-bold text-slate-200 uppercase">No Bounties Match Filter</h3>
                 <p className="text-xs text-slate-400 mt-1 max-w-md mx-auto">
-                  {contractAddress
-                    ? 'No bug bounties have been posted to this GenLayer contract yet. Click "Post Bug Bounty" to lock GEN rewards!'
-                    : 'Connect your deployed GenLayer contract address or click "Post Bug Bounty" to start!'}
+                  Click "Post Bug Bounty" to create a new bounty card or reset filter.
                 </p>
               </div>
               <button
@@ -272,7 +332,7 @@ export default function App() {
                 className="inline-flex items-center space-x-2 px-5 py-2 text-xs font-bold text-slate-950 bg-emerald-500 hover:bg-emerald-400 rounded shadow-[0_0_15px_rgba(16,185,129,0.3)] transition-all"
               >
                 <Plus className="w-4 h-4" />
-                <span>Post First Bug Bounty</span>
+                <span>Post New Bug Bounty</span>
               </button>
             </div>
           ) : (
