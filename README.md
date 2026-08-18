@@ -6,16 +6,16 @@
 
 ---
 
-## 📜 Deployed Intelligent Contract (GenLayer Studionet)
+## Live App
 
-- **Contract Address:** [`0x50D3Be85f953Da4D608b1F342B4634042D0F48eA`](https://genlayer-explorer.vercel.app/address/0x50D3Be85f953Da4D608b1F342B4634042D0F48eA)
-- **Explorer Link:** [https://genlayer-explorer.vercel.app/address/0x50D3Be85f953Da4D608b1F342B4634042D0F48eA](https://genlayer-explorer.vercel.app/address/0x50D3Be85f953Da4D608b1F342B4634042D0F48eA)
+- **URL:** [https://auditor-shield-genlayer.vercel.app](https://auditor-shield-genlayer.vercel.app)
 
 ---
 
-## 🌐 Live Production Application
+## Deployed Contract (studionet)
 
-- **Vercel DApp URL:** [https://auditor-shield-genlayer.vercel.app](https://auditor-shield-genlayer.vercel.app)
+- **Address:** `0x50D3Be85f953Da4D608b1F342B4634042D0F48eA`
+- **Explorer Link:** [https://genlayer-explorer.vercel.app/address/0x50D3Be85f953Da4D608b1F342B4634042D0F48eA](https://genlayer-explorer.vercel.app/address/0x50D3Be85f953Da4D608b1F342B4634042D0F48eA)
 
 ---
 
