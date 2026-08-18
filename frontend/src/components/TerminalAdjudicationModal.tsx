@@ -27,16 +27,16 @@ export const TerminalAdjudicationModal: React.FC<TerminalAdjudicationModalProps>
       // Historical log view
       setLogs([
         `[SYSTEM] Historical GenVM Adjudication Log for Bounty #${bounty.id}`,
-        `[CONTRACT] Address: 0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0`,
-        `[GENVM] Code Target: ${bounty.code_url}`,
+        `[CONTRACT] Address: 0x50D3Be85f953Da4D608b1F342B4634042D0F48eA`,
+        `[GENVM] Code Target: ${bounty.code_url || 'N/A'}`,
         `[GENVM] Report Source: ${bounty.report_url || 'N/A'}`,
         `[404-GUARD] Code status: HTTP 200 OK | Report status: ${bounty.report_url ? 'HTTP 200 OK' : 'EMPTY'}`,
         `[CONSENSUS] Leader-Validator Verdict Agreement: TRUE`,
         `----------------------------------------------------------------------`,
         `[VERDICT] ${bounty.ai_verdict || 'PENDING'}`,
-        `[CONFIDENCE] ${bounty.confidence}%`,
+        `[CONFIDENCE] ${bounty.confidence || '0'}%`,
         `[REASON] ${bounty.ai_reason || 'No evaluation performed yet.'}`,
-        `[STATUS] Contract state transitioned to: ${bounty.status}`,
+        `[STATUS] Contract state transitioned to: ${bounty.status || 'OPEN'}`,
       ]);
       setProgress(100);
       return;
@@ -49,9 +49,9 @@ export const TerminalAdjudicationModal: React.FC<TerminalAdjudicationModalProps>
     const simulationSteps = [
       `[00:01] [+] GenVM Invocation: gl.public.write.adjudicate_report(bounty_id="${bounty.id}")`,
       `[00:02] [+] Connecting to Leader Node & Validator Consensus Pool...`,
-      `[00:03] [+] Fetching Target Code: gl.nondet.web.render("${bounty.code_url}", mode="text")...`,
+      `[00:03] [+] Fetching Target Code: gl.nondet.web.render("${bounty.code_url || ''}", mode="text")...`,
       `[00:04] [✔] 404 Guard Check Passed: Code source online & verified.`,
-      `[00:05] [+] Fetching Vulnerability Report: gl.nondet.web.render("${bounty.report_url}", mode="text")...`,
+      `[00:05] [+] Fetching Vulnerability Report: gl.nondet.web.render("${bounty.report_url || ''}", mode="text")...`,
       `[00:06] [✔] 404 Guard Check Passed: Report document retrieved.`,
       `[00:07] [⚡] Constructing Prompt for Senior Security Auditor AI...`,
       `[00:08] [⚡] Executing gl.nondet.exec_prompt(response_format="json")...`,
@@ -60,19 +60,24 @@ export const TerminalAdjudicationModal: React.FC<TerminalAdjudicationModalProps>
       `[00:14] [✔] Leader Verdict Generated: PAYOUT (Confidence: 96%)`,
       `[00:16] [+] Running Validator Node Check: validator_fn(leader_res)...`,
       `[00:17] [✔] Leader-Validator Consensus Achieved! Verdict Match: True`,
-      `[00:18] [💰] Executing Escrow Payout: gl.get_contract_at(whitehat).emit_transfer(value=u256(${bounty.reward_amount}))`,
+      `[00:18] [💰] Executing Escrow Payout: gl.get_contract_at(whitehat).emit_transfer(value=u256(${bounty.reward_amount || '0'}))`,
       `[00:19] [STATUS] Bounty #${bounty.id} status updated to CLOSED. Escrow disbursed.`,
     ];
 
     let currentStep = 0;
     const interval = setInterval(() => {
       if (currentStep < simulationSteps.length) {
-        setLogs((prev) => [...prev, simulationSteps[currentStep]]);
+        const stepText = simulationSteps[currentStep];
+        if (stepText) {
+          setLogs((prev) => [...prev, stepText]);
+        }
         currentStep++;
         setProgress(Math.round((currentStep / simulationSteps.length) * 100));
       } else {
         clearInterval(interval);
-        if (onFinishedSim) onFinishedSim();
+        if (onFinishedSim) {
+          onFinishedSim();
+        }
       }
     }, 450);
 
@@ -124,22 +129,25 @@ export const TerminalAdjudicationModal: React.FC<TerminalAdjudicationModalProps>
             </div>
           )}
 
-          {logs.map((log, idx) => (
-            <div
-              key={idx}
-              className={`leading-relaxed ${
-                log.includes('PAYOUT')
-                  ? 'text-emerald-300 font-bold bg-emerald-950/40 px-2 py-1 rounded border border-emerald-500/30'
-                  : log.includes('REJECT')
-                  ? 'text-rose-400 font-bold bg-rose-950/40 px-2 py-1 rounded border border-rose-500/30'
-                  : log.includes('ESCALATE')
-                  ? 'text-amber-400 font-bold bg-amber-950/40 px-2 py-1 rounded border border-amber-500/30'
-                  : 'text-slate-300'
-              }`}
-            >
-              {log}
-            </div>
-          ))}
+          {logs.map((log, idx) => {
+            const logStr = String(log || '');
+            return (
+              <div
+                key={idx}
+                className={`leading-relaxed ${
+                  logStr.includes('PAYOUT')
+                    ? 'text-emerald-300 font-bold bg-emerald-950/40 px-2 py-1 rounded border border-emerald-500/30'
+                    : logStr.includes('REJECT')
+                    ? 'text-rose-400 font-bold bg-rose-950/40 px-2 py-1 rounded border border-rose-500/30'
+                    : logStr.includes('ESCALATE')
+                    ? 'text-amber-400 font-bold bg-amber-950/40 px-2 py-1 rounded border border-amber-500/30'
+                    : 'text-slate-300'
+                }`}
+              >
+                {logStr}
+              </div>
+            );
+          })}
 
           {isSimulating && progress < 100 && (
             <div className="flex items-center space-x-2 text-emerald-400 animate-pulse pt-2">
