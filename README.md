@@ -14,8 +14,8 @@
 
 ## Deployed Contract (studionet)
 
-- **Address:** `0x50D3Be85f953Da4D608b1F342B4634042D0F48eA`
-- **Explorer Link:** [https://genlayer-explorer.vercel.app/address/0x50D3Be85f953Da4D608b1F342B4634042D0F48eA](https://genlayer-explorer.vercel.app/address/0x50D3Be85f953Da4D608b1F342B4634042D0F48eA)
+- **Address:** `0x46eC201591A383CEe27D8ad893F0Ff63f641b799`
+- **Explorer Link:** [https://genlayer-explorer.vercel.app/address/0x46eC201591A383CEe27D8ad893F0Ff63f641b799](https://genlayer-explorer.vercel.app/address/0x46eC201591A383CEe27D8ad893F0Ff63f641b799)
 
 ---
 
@@ -62,6 +62,7 @@ AuditorShield/
 │   │   │   ├── CreateBountyModal.tsx         # Deposit GEN & lock code scope
 │   │   │   ├── SubmitReportModal.tsx         # Submit Vulnerability Report URL
 │   │   │   ├── TerminalAdjudicationModal.tsx # Live GenVM AI Hacker Terminal
+│   │   │   ├── Footer.tsx                    # Cyberpunk Project Footer
 │   │   │   └── ContractCodeModal.tsx         # In-dApp Intelligent Contract source viewer
 │   │   ├── types.ts                          # TypeScript interfaces & mock data
 │   │   ├── App.tsx                           # Main Dashboard App
@@ -82,14 +83,14 @@ AuditorShield/
 class Bounty:
     owner: Address
     whitehat: Address
-    reward_amount: bigint
+    reward_amount: u256
     code_url: str          # Target GitHub/Gist code URL
     focus_area: str        # Security scope focus
     report_url: str        # Whitehat vulnerability report URL
     status: str            # OPEN, EVALUATING, CLOSED, ESCALATED
     ai_verdict: str        # PAYOUT, PARTIAL, REJECT, ESCALATE
     ai_reason: str         # AI technical justification
-    confidence: bigint     # AI confidence score (0-100)
+    confidence: u256       # AI confidence score (0-100)
 ```
 
 ### Public Methods
