@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Header } from './components/Header';
 import { StatsOverview } from './components/StatsOverview';
 import { BountyCard } from './components/BountyCard';
@@ -6,14 +6,20 @@ import { CreateBountyModal } from './components/CreateBountyModal';
 import { SubmitReportModal } from './components/SubmitReportModal';
 import { TerminalAdjudicationModal } from './components/TerminalAdjudicationModal';
 import { ContractCodeModal } from './components/ContractCodeModal';
+import { WalletModal } from './components/WalletModal';
 import type { Bounty } from './types';
 import { INITIAL_BOUNTIES } from './types';
+import { setupWalletListeners } from './utils/web3';
 import { ShieldCheck, Filter, Sparkles, Terminal as TerminalIcon } from 'lucide-react';
 
 export default function App() {
   const [bounties, setBounties] = useState<Bounty[]>(INITIAL_BOUNTIES);
   const [filter, setFilter] = useState<'ALL' | 'OPEN' | 'EVALUATING' | 'CLOSED' | 'ESCALATED'>('ALL');
-  const [account, setAccount] = useState<string>('0x89205A3A3b2A69De6Dbf7f01ED13B2108B2c43e7');
+  
+  // Real Web3 Wallet State
+  const [account, setAccount] = useState<string>('');
+  const [providerName, setProviderName] = useState<string>('');
+  const [isWalletModalOpen, setIsWalletModalOpen] = useState(false);
 
   // Modals state
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -26,12 +32,17 @@ export default function App() {
   const [terminalBounty, setTerminalBounty] = useState<Bounty | null>(null);
   const [isSimulating, setIsSimulating] = useState(false);
 
-  const handleConnectWallet = () => {
-    if (!account) {
-      setAccount('0x89205A3A3b2A69De6Dbf7f01ED13B2108B2c43e7');
-    } else {
-      setAccount('');
-    }
+  // Setup EIP-1193 MetaMask listeners
+  useEffect(() => {
+    const cleanup = setupWalletListeners((newAccount) => {
+      setAccount(newAccount);
+    });
+    return cleanup;
+  }, []);
+
+  const handleAccountConnected = (address: string, name: string) => {
+    setAccount(address);
+    setProviderName(name);
   };
 
   const handleCreateBounty = (codeUrl: string, focusArea: string, amount: string) => {
@@ -112,7 +123,8 @@ export default function App() {
         onOpenCreate={() => setIsCreateOpen(true)}
         onOpenCode={() => setIsCodeOpen(true)}
         account={account}
-        onConnectWallet={handleConnectWallet}
+        providerName={providerName}
+        onOpenWalletModal={() => setIsWalletModalOpen(true)}
       />
 
       {/* Main Container */}
@@ -200,6 +212,13 @@ export default function App() {
       </main>
 
       {/* Modals */}
+      <WalletModal
+        isOpen={isWalletModalOpen}
+        onClose={() => setIsWalletModalOpen(false)}
+        currentAccount={account}
+        onAccountConnected={handleAccountConnected}
+      />
+
       <CreateBountyModal
         isOpen={isCreateOpen}
         onClose={() => setIsCreateOpen(false)}
