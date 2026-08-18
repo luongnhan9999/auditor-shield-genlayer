@@ -8,6 +8,7 @@ import { TerminalAdjudicationModal } from './components/TerminalAdjudicationModa
 import { ContractCodeModal } from './components/ContractCodeModal';
 import { WalletModal } from './components/WalletModal';
 import { ContractSettingsModal } from './components/ContractSettingsModal';
+import { Footer } from './components/Footer';
 import type { Bounty } from './types';
 import { DEMO_SCENARIOS, DEFAULT_CONTRACT_ADDRESS } from './types';
 import { setupWalletListeners, autoCheckWalletConnection, saveWalletState } from './utils/web3';
@@ -520,6 +521,9 @@ export default function App() {
         isOpen={isCodeOpen}
         onClose={() => setIsCodeOpen(false)}
       />
+
+      {/* Footer Component */}
+      <Footer contractAddress={contractAddress} />
     </div>
   );
 }
