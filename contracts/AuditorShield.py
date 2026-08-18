@@ -9,40 +9,34 @@ import json
 class Bounty:
     owner: Address
     whitehat: Address
-    reward_amount: bigint
-    code_url: str          # Target GitHub/Gist code URL
-    focus_area: str        # Security scope focus (e.g., "Focus on reentrancy and overflows")
-    report_url: str        # Whitehat vulnerability report URL
-    status: str            # OPEN, CLAIMED, EVALUATING, CLOSED, ESCALATED
-    ai_verdict: str
+    reward_amount: u256
+    code_url: str
+    focus_area: str
+    report_url: str
+    status: str            # OPEN, EVALUATING, CLOSED, ESCALATED
+    ai_verdict: str        # PAYOUT, PARTIAL, REJECT, ESCALATE
     ai_reason: str
-    confidence: bigint
+    confidence: u256
 
 class Contract(gl.Contract):
     bounties: TreeMap[str, Bounty]
-    next_bounty_id: bigint
+    next_bounty_id: u256
     platform_admin: str
 
     def __init__(self):
-        # Do not re-initialize TreeMap here (Rule #2)
-        self.next_bounty_id = bigint(1)
+        self.next_bounty_id = u256(1)
         self.platform_admin = str(gl.message.sender_address).lower()
 
-    def _parse_llm_json(self, text) -> dict:
-        """Parse JSON response from LLM robustly handling markdown code fences."""
-        if isinstance(text, dict):
-            return text
-        if hasattr(text, '__dict__'):
-            return text.__dict__
-        text = str(text).strip()
-        if text.startswith("```json"):
-            text = text[7:]
-        elif text.startswith("```"):
-            text = text[3:]
-        if text.endswith("```"):
-            text = text[:-3]
+    def _parse_json(self, text: str) -> dict:
+        text_str = str(text).strip()
+        if text_str.startswith("```json"):
+            text_str = text_str[7:]
+        elif text_str.startswith("```"):
+            text_str = text_str[3:]
+        if text_str.endswith("```"):
+            text_str = text_str[:-3]
         try:
-            return json.loads(text.strip())
+            return json.loads(text_str.strip())
         except Exception as e:
             return {"verdict": "ESCALATE", "confidence": 0, "reason": f"Parse error: {str(e)}"}
 
@@ -50,13 +44,13 @@ class Contract(gl.Contract):
     def create_bounty(self, code_url: str, focus_area: str) -> str:
         """Project Owner creates a Bug Bounty and locks reward escrow tokens."""
         amount = gl.message.value
-        if amount <= bigint(0):
+        if amount <= u256(0):
             raise UserError("Bounty reward must be greater than 0")
         if not code_url.startswith("http"):
             raise UserError("Valid code URL required")
 
         bounty_id = str(self.next_bounty_id)
-        self.next_bounty_id += bigint(1)
+        self.next_bounty_id += u256(1)
 
         self.bounties[bounty_id] = Bounty(
             owner=gl.message.sender_address,
@@ -68,7 +62,7 @@ class Contract(gl.Contract):
             status="OPEN",
             ai_verdict="",
             ai_reason="",
-            confidence=bigint(0)
+            confidence=u256(0)
         )
         return bounty_id
 
@@ -109,7 +103,7 @@ class Contract(gl.Contract):
             # 1. Anti-Rugpull Guard: Protect Whitehat against Owner deleting code repository
             try:
                 code_res = gl.nondet.web.render(code_str, mode="text")
-                code_text = code_res.content if hasattr(code_res, "content") else str(code_res)
+                code_text = str(code_res)
                 if any(err in code_text[:400].lower() for err in ["404 not found", "error 404", "not found"]):
                     return {"verdict": "ESCALATE", "confidence": 100, "reason": "Target code URL is dead or 404. Escalate to protect Whitehat from rugpull."}
             except Exception as e:
@@ -118,7 +112,7 @@ class Contract(gl.Contract):
             # 2. Anti-Spam Guard: Protect Owner against fake/dead report submission
             try:
                 report_res = gl.nondet.web.render(report_str, mode="text")
-                report_text = report_res.content if hasattr(report_res, "content") else str(report_res)
+                report_text = str(report_res)
                 if any(err in report_text[:400].lower() for err in ["404 not found", "error 404", "not found"]):
                     return {"verdict": "REJECT", "confidence": 100, "reason": "Report URL is dead or 404. Rejecting spam submission."}
             except Exception as e:
@@ -149,26 +143,19 @@ class Contract(gl.Contract):
             
             res = gl.nondet.exec_prompt(prompt, response_format="json")
             if isinstance(res, dict): return res
-            if hasattr(res, 'calldata') and isinstance(res.calldata, dict): return res.calldata
-            
-            text = res.content if hasattr(res, "content") else str(res)
-            return self._parse_llm_json(text)
+            return self._parse_json(str(res))
 
         def validator_fn(leader_res) -> bool:
-            if not isinstance(leader_res, gl.vm.Return):
-                return False
-            leader_data = leader_res.calldata if hasattr(leader_res, "calldata") else leader_res
+            leader_data = leader_res
             if not isinstance(leader_data, dict):
-                leader_data = self._parse_llm_json(str(leader_data))
+                leader_data = self._parse_json(str(leader_data))
                 
             mine_data = leader_fn()
-            
-            # Strict Verdict Consensus: Compare core verdict only, ignoring minor reason text formulation differences.
             return str(leader_data.get("verdict", "")).upper() == str(mine_data.get("verdict", "")).upper()
 
         result = gl.vm.run_nondet(leader_fn, validator_fn)
         if not isinstance(result, dict):
-            result = self._parse_llm_json(str(result))
+            result = self._parse_json(str(result))
 
         final_verdict = str(result.get("verdict", "ESCALATE")).upper()
         try:
@@ -178,32 +165,30 @@ class Contract(gl.Contract):
             
         reason = str(result.get("reason", "No reason provided"))
 
-        # Force Escalate if AI confidence is low
         if confidence < 65:
             final_verdict = "ESCALATE"
             reason = f"[Low Confidence {confidence}%] " + reason
 
         bounty.ai_verdict = final_verdict
         bounty.ai_reason = reason
-        bounty.confidence = bigint(confidence)
+        bounty.confidence = u256(confidence)
         
         amount = bounty.reward_amount
 
-        # On-chain settlement & fund disbursement (Cast to u256)
         if final_verdict == "PAYOUT":
             bounty.status = "CLOSED"
-            gl.get_contract_at(Address(str(bounty.whitehat))).emit_transfer(value=u256(amount))
+            gl.get_contract_at(Address(str(bounty.whitehat))).emit_transfer(value=amount)
         elif final_verdict == "REJECT":
-            bounty.status = "OPEN" # Reset bounty back for another submission
+            bounty.status = "OPEN"
             bounty.whitehat = Address("0x0000000000000000000000000000000000000000")
             bounty.report_url = ""
         elif final_verdict == "PARTIAL":
             bounty.status = "CLOSED"
-            payout_amt = amount // bigint(4)  # 25% consolation reward to Whitehat
-            refund_amt = amount - payout_amt  # 75% refund to Owner
-            gl.get_contract_at(Address(str(bounty.whitehat))).emit_transfer(value=u256(payout_amt))
-            gl.get_contract_at(Address(str(bounty.owner))).emit_transfer(value=u256(refund_amt))
-        else: # ESCALATE
+            payout_amt = amount // u256(4)
+            refund_amt = amount - payout_amt
+            gl.get_contract_at(Address(str(bounty.whitehat))).emit_transfer(value=payout_amt)
+            gl.get_contract_at(Address(str(bounty.owner))).emit_transfer(value=payout_amt)
+        else:
             bounty.status = "ESCALATED"
 
         self.bounties[bounty_id] = bounty

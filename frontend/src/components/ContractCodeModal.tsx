@@ -17,35 +17,35 @@ import json
 class Bounty:
     owner: Address
     whitehat: Address
-    reward_amount: bigint
-    code_url: str          # Target GitHub/Gist code URL
-    focus_area: str        # Security scope focus
-    report_url: str        # Whitehat vulnerability report URL
-    status: str            # OPEN, CLAIMED, EVALUATING, CLOSED, ESCALATED
-    ai_verdict: str
+    reward_amount: u256
+    code_url: str
+    focus_area: str
+    report_url: str
+    status: str            # OPEN, EVALUATING, CLOSED, ESCALATED
+    ai_verdict: str        # PAYOUT, PARTIAL, REJECT, ESCALATE
     ai_reason: str
-    confidence: bigint
+    confidence: u256
 
 class Contract(gl.Contract):
     bounties: TreeMap[str, Bounty]
-    next_bounty_id: bigint
+    next_bounty_id: u256
     platform_admin: str
 
     def __init__(self):
-        self.next_bounty_id = bigint(1)
+        self.next_bounty_id = u256(1)
         self.platform_admin = str(gl.message.sender_address).lower()
 
     @gl.public.write.payable
     def create_bounty(self, code_url: str, focus_area: str) -> str:
         """Project Owner creates a Bug Bounty and locks reward escrow tokens."""
         amount = gl.message.value
-        if amount <= bigint(0):
+        if amount <= u256(0):
             raise UserError("Bounty reward must be greater than 0")
         if not code_url.startswith("http"):
             raise UserError("Valid code URL required")
 
         bounty_id = str(self.next_bounty_id)
-        self.next_bounty_id += bigint(1)
+        self.next_bounty_id += u256(1)
 
         self.bounties[bounty_id] = Bounty(
             owner=gl.message.sender_address,
@@ -57,7 +57,7 @@ class Contract(gl.Contract):
             status="OPEN",
             ai_verdict="",
             ai_reason="",
-            confidence=bigint(0)
+            confidence=u256(0)
         )
         return bounty_id
 
@@ -104,7 +104,7 @@ class Contract(gl.Contract):
             return str(leader_data.get("verdict")).upper() == str(mine_data.get("verdict")).upper()
 
         result = gl.vm.run_nondet(leader_fn, validator_fn)
-        # On-chain settlement & fund disbursement: PAYOUT (100%), PARTIAL (25%), REJECT (Reset), ESCALATE
+        # On-chain settlement: PAYOUT (100%), PARTIAL (25%), REJECT (Reset), ESCALATE
 `;
 
 export const ContractCodeModal: React.FC<ContractCodeModalProps> = ({ isOpen, onClose }) => {
