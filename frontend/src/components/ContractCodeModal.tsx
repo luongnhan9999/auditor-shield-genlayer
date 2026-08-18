@@ -18,9 +18,9 @@ class Bounty:
     owner: Address
     whitehat: Address
     reward_amount: bigint
-    code_url: str          # Link GitHub/Gist chứa code cần audit
-    focus_area: str        # Ví dụ: "Focus on reentrancy and math overflows"
-    report_url: str        # Link báo cáo lỗi của Hacker
+    code_url: str          # Target GitHub/Gist code URL
+    focus_area: str        # Security scope focus
+    report_url: str        # Whitehat vulnerability report URL
     status: str            # OPEN, CLAIMED, EVALUATING, CLOSED, ESCALATED
     ai_verdict: str
     ai_reason: str
@@ -37,7 +37,7 @@ class Contract(gl.Contract):
 
     @gl.public.write.payable
     def create_bounty(self, code_url: str, focus_area: str) -> str:
-        """Chủ dự án tạo Bug Bounty và khóa tiền thưởng"""
+        """Project Owner creates a Bug Bounty and locks reward escrow tokens."""
         amount = gl.message.value
         if amount <= bigint(0):
             raise UserError("Bounty reward must be greater than 0")
@@ -63,7 +63,7 @@ class Contract(gl.Contract):
 
     @gl.public.write
     def submit_report(self, bounty_id: str, report_url: str) -> None:
-        """Hacker nộp báo cáo lỗi"""
+        """Whitehat hacker submits a vulnerability report URL."""
         if bounty_id not in self.bounties:
             raise UserError("Bounty does not exist")
         
@@ -82,16 +82,16 @@ class Contract(gl.Contract):
 
     @gl.public.write
     def adjudicate_report(self, bounty_id: str) -> None:
-        """AI tự động đánh giá báo cáo bảo mật và giải ngân"""
+        """GenVM AI automatically evaluates the security report and disburses escrow funds."""
         bounty = self.bounties[bounty_id]
 
         def leader_fn():
-            # 1. Protection against Owner code deletion (Protect Whitehat)
+            # 1. Anti-Rugpull Guard: Protect Whitehat against Owner deleting code repository
             code_res = gl.nondet.web.render(bounty.code_url, mode="text")
             if any(err in str(code_res)[:400].lower() for err in ["404 not found", "error 404"]):
                 return {"verdict": "ESCALATE", "confidence": 100, "reason": "Target code 404 dead link"}
 
-            # 2. Protection against Whitehat spam report (Protect Owner)
+            # 2. Anti-Spam Guard: Protect Owner against fake/dead report submission
             report_res = gl.nondet.web.render(bounty.report_url, mode="text")
             if any(err in str(report_res)[:400].lower() for err in ["404 not found", "error 404"]):
                 return {"verdict": "REJECT", "confidence": 100, "reason": "Report 404 dead link"}
@@ -104,7 +104,7 @@ class Contract(gl.Contract):
             return str(leader_data.get("verdict")).upper() == str(mine_data.get("verdict")).upper()
 
         result = gl.vm.run_nondet(leader_fn, validator_fn)
-        # Disburse funds based on verdict: PAYOUT (100%), PARTIAL (25%), REJECT (Reset), ESCALATE
+        # On-chain settlement & fund disbursement: PAYOUT (100%), PARTIAL (25%), REJECT (Reset), ESCALATE
 `;
 
 export const ContractCodeModal: React.FC<ContractCodeModalProps> = ({ isOpen, onClose }) => {
@@ -147,7 +147,7 @@ export const ContractCodeModal: React.FC<ContractCodeModalProps> = ({ isOpen, on
         <div className="bg-slate-950/90 border-b border-slate-800 p-4 text-xs space-y-2">
           <div className="flex items-center space-x-2 text-emerald-400 font-bold">
             <Sparkles className="w-4 h-4" />
-            <span>Why GenLayer Fit is 100% Exceptional for AuditorShield</span>
+            <span>Why GenLayer Fit is Exceptional for AuditorShield</span>
           </div>
           <p className="text-slate-300 leading-relaxed text-[11px]">
             Evaluating whether a security vulnerability report matches target smart contract code is subjective and complex.

@@ -10,9 +10,9 @@ class Bounty:
     owner: Address
     whitehat: Address
     reward_amount: bigint
-    code_url: str          # Link GitHub/Gist chứa code cần audit
-    focus_area: str        # Ví dụ: "Focus on reentrancy and math overflows"
-    report_url: str        # Link báo cáo lỗi của Hacker
+    code_url: str          # Target GitHub/Gist code URL
+    focus_area: str        # Security scope focus (e.g., "Focus on reentrancy and overflows")
+    report_url: str        # Whitehat vulnerability report URL
     status: str            # OPEN, CLAIMED, EVALUATING, CLOSED, ESCALATED
     ai_verdict: str
     ai_reason: str
@@ -24,12 +24,12 @@ class Contract(gl.Contract):
     platform_admin: str
 
     def __init__(self):
-        # Không khởi tạo lại TreeMap ở đây (Rule #2)
+        # Do not re-initialize TreeMap here (Rule #2)
         self.next_bounty_id = bigint(1)
         self.platform_admin = str(gl.message.sender_address).lower()
 
     def _parse_llm_json(self, text) -> dict:
-        """Trình parse JSON chống lỗi markdown của LLM"""
+        """Parse JSON response from LLM robustly handling markdown code fences."""
         if isinstance(text, dict):
             return text
         if hasattr(text, '__dict__'):
@@ -48,7 +48,7 @@ class Contract(gl.Contract):
 
     @gl.public.write.payable
     def create_bounty(self, code_url: str, focus_area: str) -> str:
-        """Chủ dự án tạo Bug Bounty và khóa tiền thưởng"""
+        """Project Owner creates a Bug Bounty and locks reward escrow tokens."""
         amount = gl.message.value
         if amount <= bigint(0):
             raise UserError("Bounty reward must be greater than 0")
@@ -74,7 +74,7 @@ class Contract(gl.Contract):
 
     @gl.public.write
     def submit_report(self, bounty_id: str, report_url: str) -> None:
-        """Hacker nộp báo cáo lỗi (Bất kỳ ai cũng có thể nộp)"""
+        """Whitehat hacker submits a vulnerability report URL."""
         if bounty_id not in self.bounties:
             raise UserError("Bounty does not exist")
         
@@ -93,7 +93,7 @@ class Contract(gl.Contract):
 
     @gl.public.write
     def adjudicate_report(self, bounty_id: str) -> None:
-        """AI tự động đánh giá báo cáo bảo mật và giải ngân"""
+        """GenVM AI automatically evaluates the security report and disburses escrow funds."""
         if bounty_id not in self.bounties:
             raise UserError("Bounty does not exist")
             
@@ -106,7 +106,7 @@ class Contract(gl.Contract):
         focus_str = str(bounty.focus_area)
 
         def leader_fn():
-            # 1. Bảo vệ chống thủ đoạn xóa code của Owner (Protect Whitehat)
+            # 1. Anti-Rugpull Guard: Protect Whitehat against Owner deleting code repository
             try:
                 code_res = gl.nondet.web.render(code_str, mode="text")
                 code_text = code_res.content if hasattr(code_res, "content") else str(code_res)
@@ -115,7 +115,7 @@ class Contract(gl.Contract):
             except Exception as e:
                 return {"verdict": "ESCALATE", "confidence": 100, "reason": f"Code fetch failed: {str(e)}"}
 
-            # 2. Bảo vệ chống báo cáo rác/link ảo của Hacker (Protect Owner)
+            # 2. Anti-Spam Guard: Protect Owner against fake/dead report submission
             try:
                 report_res = gl.nondet.web.render(report_str, mode="text")
                 report_text = report_res.content if hasattr(report_res, "content") else str(report_res)
@@ -163,7 +163,7 @@ class Contract(gl.Contract):
                 
             mine_data = leader_fn()
             
-            # ĐỒNG THUẬN CHUẨN MỰC: Chỉ so sánh ý nghĩa cốt lõi, phớt lờ lý do.
+            # Strict Verdict Consensus: Compare core verdict only, ignoring minor reason text formulation differences.
             return str(leader_data.get("verdict", "")).upper() == str(mine_data.get("verdict", "")).upper()
 
         result = gl.vm.run_nondet(leader_fn, validator_fn)
@@ -178,7 +178,7 @@ class Contract(gl.Contract):
             
         reason = str(result.get("reason", "No reason provided"))
 
-        # Ép Escalate nếu AI không chắc chắn
+        # Force Escalate if AI confidence is low
         if confidence < 65:
             final_verdict = "ESCALATE"
             reason = f"[Low Confidence {confidence}%] " + reason
@@ -189,18 +189,18 @@ class Contract(gl.Contract):
         
         amount = bounty.reward_amount
 
-        # Xử lý luồng tiền (Bắt buộc ép kiểu u256)
+        # On-chain settlement & fund disbursement (Cast to u256)
         if final_verdict == "PAYOUT":
             bounty.status = "CLOSED"
             gl.get_contract_at(Address(str(bounty.whitehat))).emit_transfer(value=u256(amount))
         elif final_verdict == "REJECT":
-            bounty.status = "OPEN" # Reset bounty lại cho người khác nộp
+            bounty.status = "OPEN" # Reset bounty back for another submission
             bounty.whitehat = Address("0x0000000000000000000000000000000000000000")
             bounty.report_url = ""
         elif final_verdict == "PARTIAL":
             bounty.status = "CLOSED"
-            payout_amt = amount // bigint(4)  # Thưởng an ủi 25% cho lỗi nhỏ
-            refund_amt = amount - payout_amt
+            payout_amt = amount // bigint(4)  # 25% consolation reward to Whitehat
+            refund_amt = amount - payout_amt  # 75% refund to Owner
             gl.get_contract_at(Address(str(bounty.whitehat))).emit_transfer(value=u256(payout_amt))
             gl.get_contract_at(Address(str(bounty.owner))).emit_transfer(value=u256(refund_amt))
         else: # ESCALATE
@@ -210,7 +210,7 @@ class Contract(gl.Contract):
 
     @gl.public.view
     def get_all_bounties(self) -> str:
-        """API cho Frontend render dashboard"""
+        """API for Frontend dashboard rendering"""
         result = []
         max_id = int(str(self.next_bounty_id))
         for i in range(1, max_id):

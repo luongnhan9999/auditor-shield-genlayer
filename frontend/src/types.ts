@@ -71,4 +71,6 @@ export const DEMO_SCENARIOS: Bounty[] = [
 export const INITIAL_BOUNTIES: Bounty[] = DEMO_SCENARIOS;
 
 export const DEFAULT_CONTRACT_ADDRESS =
-  import.meta.env.VITE_GENLAYER_CONTRACT_ADDRESS || '';
+  import.meta.env.VITE_CONTRACT_ADDRESS ||
+  import.meta.env.VITE_GENLAYER_CONTRACT_ADDRESS ||
+  '0x50D3Be85f953Da4D608b1F342B4634042D0F48eA';

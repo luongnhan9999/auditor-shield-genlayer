@@ -6,6 +6,19 @@
 
 ---
 
+## 📜 Deployed Intelligent Contract (GenLayer Studionet)
+
+- **Contract Address:** [`0x50D3Be85f953Da4D608b1F342B4634042D0F48eA`](https://genlayer-explorer.vercel.app/address/0x50D3Be85f953Da4D608b1F342B4634042D0F48eA)
+- **Explorer Link:** [https://genlayer-explorer.vercel.app/address/0x50D3Be85f953Da4D608b1F342B4634042D0F48eA](https://genlayer-explorer.vercel.app/address/0x50D3Be85f953Da4D608b1F342B4634042D0F48eA)
+
+---
+
+## 🌐 Live Production Application
+
+- **Vercel DApp URL:** [https://auditor-shield-genlayer.vercel.app](https://auditor-shield-genlayer.vercel.app)
+
+---
+
 ## 🚀 Executive Summary
 
 Existing Web3 Bug Bounty platforms (such as Immunefi) rely on human triagers to manually verify submitted vulnerability reports against complex smart contract code bases. This manual process is slow, expensive, and centralized. However, fully decentralized bug bounty escrows risk being flooded with spam or AI-hallucinated reports.
@@ -92,13 +105,6 @@ class Bounty:
 ### 1. Run Unit Tests
 ```bash
 python tests/test_auditor_shield.py
-```
-*Expected Output:*
-```
-[OK] Test Passed: Bounty Creation Validation
-[OK] Test Passed: Anti-404 Dead Link Protection
-[OK] Test Passed: Verdict-Only Consensus Matching
-[OK] All AuditorShield tests passed successfully!
 ```
 
 ### 2. Deploy via GenLayer CLI
