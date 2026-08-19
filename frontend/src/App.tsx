@@ -110,15 +110,19 @@ export default function App() {
         await writeContractOnChain(contractAddress, 'create_bounty', [codeUrl, focusArea], valueWei, network);
         setTxMessage('Transaction confirmed on GenLayer Studionet!');
         setTimeout(() => setTxMessage(''), 3000);
-        fetchBounties();
+        // RPC mode: re-fetch from confirmed contract reads only
+        await fetchBounties();
       } catch (err: any) {
-        console.warn('On-chain create_bounty fallback:', err);
+        setTxMessage('Transaction failed: ' + (err?.message || 'Unknown error'));
+        setTimeout(() => setTxMessage(''), 5000);
+        console.warn('On-chain create_bounty error:', err);
       } finally {
         setTxPending(false);
       }
+      return; // Do NOT update local state in RPC mode
     }
 
-    // Update state locally for instant UI feedback
+    // DEMO mode only: local state update for instant UI feedback
     const newBounty: Bounty = {
       id: (bounties.length + 1).toString(),
       owner: account || '0x89205A3A3b2A69De6Dbf7f01ED13B2108B2c43e7',
@@ -143,14 +147,19 @@ export default function App() {
         await writeContractOnChain(contractAddress, 'submit_report', [bountyId, reportUrl], '0', network);
         setTxMessage('Report transaction confirmed on GenLayer Studionet!');
         setTimeout(() => setTxMessage(''), 3000);
-        fetchBounties();
+        // RPC mode: re-fetch from confirmed contract reads only
+        await fetchBounties();
       } catch (err: any) {
-        console.warn('On-chain submit_report fallback:', err);
+        setTxMessage('Transaction failed: ' + (err?.message || 'Unknown error'));
+        setTimeout(() => setTxMessage(''), 5000);
+        console.warn('On-chain submit_report error:', err);
       } finally {
         setTxPending(false);
       }
+      return; // Do NOT update local state in RPC mode
     }
 
+    // DEMO mode only: local state update for instant UI feedback
     setBounties(
       bounties.map((b) => {
         if (b.id === bountyId) {
@@ -177,13 +186,18 @@ export default function App() {
         await writeContractOnChain(contractAddress, 'adjudicate_report', [bountyId], '0', network);
         setTxMessage('GenVM AI Adjudication transaction confirmed!');
         setTimeout(() => setTxMessage(''), 3000);
+        // RPC mode: re-fetch from confirmed contract reads only
+        await fetchBounties();
       } catch (err: any) {
-        console.warn('On-chain adjudicate_report fallback:', err);
+        setTxMessage('Adjudication failed: ' + (err?.message || 'Unknown error'));
+        setTimeout(() => setTxMessage(''), 5000);
+        console.warn('On-chain adjudicate_report error:', err);
       } finally {
         setTxPending(false);
       }
     }
 
+    // Show terminal animation (both modes)
     setTerminalBounty(target);
     setIsSimulating(true);
     setIsTerminalOpen(true);
@@ -191,6 +205,14 @@ export default function App() {
 
   const handleFinishedSim = () => {
     if (!terminalBounty) return;
+
+    if (mode === 'RPC') {
+      // RPC mode: re-fetch actual on-chain state instead of local override
+      fetchBounties();
+      return;
+    }
+
+    // DEMO mode only: simulate local verdict
     setBounties((prev) =>
       prev.map((b) => {
         if (b.id === terminalBounty.id) {

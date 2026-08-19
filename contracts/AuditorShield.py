@@ -4,6 +4,8 @@ from genlayer import *
 from dataclasses import dataclass
 import json
 
+ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"
+
 @allow_storage
 @dataclass
 class Bounty:
@@ -27,7 +29,10 @@ class Contract(gl.Contract):
         self.next_bounty_id = u256(1)
         self.platform_admin = str(gl.message.sender_address).lower()
 
+    # ── Helpers ──────────────────────────────────────────────
+
     def _parse_json(self, text: str) -> dict:
+        """Robustly parse LLM JSON responses, stripping markdown fences."""
         text_str = str(text).strip()
         if text_str.startswith("```json"):
             text_str = text_str[7:]
@@ -39,6 +44,21 @@ class Contract(gl.Contract):
             return json.loads(text_str.strip())
         except Exception as e:
             return {"verdict": "ESCALATE", "confidence": 0, "reason": f"Parse error: {str(e)}"}
+
+    def _effective_verdict(self, data: dict) -> str:
+        """Derive the final verdict after applying the low-confidence override.
+        This must be identical in leader_fn and validator_fn so that the
+        validator agrees on every field that can change settlement."""
+        verdict = str(data.get("verdict", "ESCALATE")).upper()
+        try:
+            conf = int(data.get("confidence", 0))
+        except Exception:
+            conf = 0
+        if conf < 65:
+            verdict = "ESCALATE"
+        return verdict
+
+    # ── Public Write Methods ─────────────────────────────────
 
     @gl.public.write.payable
     def create_bounty(self, code_url: str, focus_area: str) -> str:
@@ -54,7 +74,7 @@ class Contract(gl.Contract):
 
         self.bounties[bounty_id] = Bounty(
             owner=gl.message.sender_address,
-            whitehat=Address("0x0000000000000000000000000000000000000000"),
+            whitehat=Address(ZERO_ADDRESS),
             reward_amount=amount,
             code_url=code_url,
             focus_area=focus_area,
@@ -71,7 +91,7 @@ class Contract(gl.Contract):
         """Whitehat hacker submits a vulnerability report URL."""
         if bounty_id not in self.bounties:
             raise UserError("Bounty does not exist")
-        
+
         bounty = self.bounties[bounty_id]
         if bounty.status != "OPEN":
             raise UserError("Bounty is not open for submissions")
@@ -87,10 +107,17 @@ class Contract(gl.Contract):
 
     @gl.public.write
     def adjudicate_report(self, bounty_id: str) -> None:
-        """GenVM AI automatically evaluates the security report and disburses escrow funds."""
+        """GenVM AI evaluates the security report, then settles the escrow.
+
+        Settlement matrix (all paths accounted for):
+          PAYOUT  → 100 % to whitehat
+          PARTIAL → 25 % to whitehat, 75 % refund to owner
+          REJECT  → bounty reset to OPEN, full escrow retained
+          ESCALATE→ funds held; resolved later via resolve_escalation
+        """
         if bounty_id not in self.bounties:
             raise UserError("Bounty does not exist")
-            
+
         bounty = self.bounties[bounty_id]
         if bounty.status != "EVALUATING":
             raise UserError("Bounty is not ready for adjudication")
@@ -98,9 +125,12 @@ class Contract(gl.Contract):
         code_str = str(bounty.code_url)
         report_str = str(bounty.report_url)
         focus_str = str(bounty.focus_area)
+        parse_json = self._parse_json
+        effective_verdict = self._effective_verdict
 
-        def leader_fn():
-            # 1. Anti-Rugpull Guard: Protect Whitehat against Owner deleting code repository
+        def _evaluate():
+            """Shared evaluation logic used by both leader and validator."""
+            # 1. Anti-Rugpull Guard — protect Whitehat if Owner deleted code
             try:
                 code_res = gl.nondet.web.render(code_str, mode="text")
                 code_text = str(code_res)
@@ -109,7 +139,7 @@ class Contract(gl.Contract):
             except Exception as e:
                 return {"verdict": "ESCALATE", "confidence": 100, "reason": f"Code fetch failed: {str(e)}"}
 
-            # 2. Anti-Spam Guard: Protect Owner against fake/dead report submission
+            # 2. Anti-Spam Guard — protect Owner if report link is dead
             try:
                 report_res = gl.nondet.web.render(report_str, mode="text")
                 report_text = str(report_res)
@@ -119,83 +149,152 @@ class Contract(gl.Contract):
                 return {"verdict": "REJECT", "confidence": 100, "reason": f"Report fetch failed: {str(e)}"}
 
             prompt = f"""
-            You are a Senior Smart Contract Auditor & Security Judge for a Web3 Bug Bounty Platform.
-            Your job is to read a submitted vulnerability report and verify if it is valid for the provided target code.
+You are a Senior Smart Contract Auditor & Security Judge for a Web3 Bug Bounty Platform.
+Your job is to read a submitted vulnerability report and verify if it is valid for the provided target code.
 
-            TARGET CODE:
-            {code_text[:2500]}
+TARGET CODE:
+{code_text[:2500]}
 
-            BOUNTY FOCUS AREA:
-            {focus_str}
+BOUNTY FOCUS AREA:
+{focus_str}
 
-            SUBMITTED VULNERABILITY REPORT:
-            {report_text[:2500]}
+SUBMITTED VULNERABILITY REPORT:
+{report_text[:2500]}
 
-            Evaluate the report strictly:
-            - PAYOUT: The report clearly identifies a valid vulnerability or major flaw that exists in the TARGET CODE.
-            - PARTIAL: The report finds minor issues, typos, or best-practice optimizations (Informational/Low severity).
-            - REJECT: The report is spam, hallucinated (describes bugs not in the code), purely AI-generated nonsense, or entirely irrelevant.
-            - ESCALATE: The code is too complex to verify, or the report requires human technical arbitration.
+Evaluate the report strictly:
+- PAYOUT: The report clearly identifies a valid vulnerability or major flaw that exists in the TARGET CODE.
+- PARTIAL: The report finds minor issues, typos, or best-practice optimizations (Informational/Low severity).
+- REJECT: The report is spam, hallucinated (describes bugs not in the code), purely AI-generated nonsense, or entirely irrelevant.
+- ESCALATE: The code is too complex to verify, or the report requires human technical arbitration.
 
-            Respond ONLY with a JSON object:
-            {{"verdict": "PAYOUT|PARTIAL|REJECT|ESCALATE", "confidence": 100, "reason": "Brief technical explanation"}}
-            """
-            
+Respond ONLY with a JSON object:
+{{"verdict": "PAYOUT|PARTIAL|REJECT|ESCALATE", "confidence": 0-100, "reason": "Brief technical explanation"}}
+"""
             res = gl.nondet.exec_prompt(prompt, response_format="json")
-            if isinstance(res, dict): return res
-            return self._parse_json(str(res))
+            if isinstance(res, dict):
+                return res
+            return parse_json(str(res))
+
+        def leader_fn():
+            return _evaluate()
 
         def validator_fn(leader_res) -> bool:
+            """Validator consensus: compare the *effective* verdict (after
+            applying the low-confidence override) so that both nodes agree
+            on the exact settlement path that will execute."""
             leader_data = leader_res
             if not isinstance(leader_data, dict):
-                leader_data = self._parse_json(str(leader_data))
-                
-            mine_data = leader_fn()
-            return str(leader_data.get("verdict", "")).upper() == str(mine_data.get("verdict", "")).upper()
+                leader_data = parse_json(str(leader_data))
+
+            mine_data = _evaluate()
+
+            leader_final = effective_verdict(leader_data)
+            mine_final = effective_verdict(mine_data)
+            return leader_final == mine_final
 
         result = gl.vm.run_nondet(leader_fn, validator_fn)
         if not isinstance(result, dict):
             result = self._parse_json(str(result))
 
-        final_verdict = str(result.get("verdict", "ESCALATE")).upper()
+        final_verdict = self._effective_verdict(result)
         try:
             confidence = int(result.get("confidence", 0))
         except Exception:
-            confidence = 100
-            
+            confidence = 0
         reason = str(result.get("reason", "No reason provided"))
-
         if confidence < 65:
-            final_verdict = "ESCALATE"
             reason = f"[Low Confidence {confidence}%] " + reason
 
+        # ── Record AI result ─────────────────────────────────
         bounty.ai_verdict = final_verdict
         bounty.ai_reason = reason
         bounty.confidence = u256(confidence)
-        
+
         amount = bounty.reward_amount
 
+        # ── Settlement ───────────────────────────────────────
         if final_verdict == "PAYOUT":
+            # 100 % escrow → whitehat
             bounty.status = "CLOSED"
             gl.get_contract_at(Address(str(bounty.whitehat))).emit_transfer(value=amount)
-        elif final_verdict == "REJECT":
-            bounty.status = "OPEN"
-            bounty.whitehat = Address("0x0000000000000000000000000000000000000000")
-            bounty.report_url = ""
+
         elif final_verdict == "PARTIAL":
+            # 25 % → whitehat consolation, 75 % → owner refund
             bounty.status = "CLOSED"
-            payout_amt = amount // u256(4)
-            refund_amt = amount - payout_amt
+            payout_amt = amount // u256(4)           # 25 %
+            refund_amt = amount - payout_amt          # 75 %
             gl.get_contract_at(Address(str(bounty.whitehat))).emit_transfer(value=payout_amt)
-            gl.get_contract_at(Address(str(bounty.owner))).emit_transfer(value=payout_amt)
+            gl.get_contract_at(Address(str(bounty.owner))).emit_transfer(value=refund_amt)
+
+        elif final_verdict == "REJECT":
+            # Reset bounty to OPEN so another whitehat can try; escrow stays locked
+            bounty.status = "OPEN"
+            bounty.whitehat = Address(ZERO_ADDRESS)
+            bounty.report_url = ""
+
         else:
+            # ESCALATE — funds held until resolve_escalation is called
             bounty.status = "ESCALATED"
 
         self.bounties[bounty_id] = bounty
 
+    # ── Escalation Resolution ────────────────────────────────
+
+    @gl.public.write
+    def resolve_escalation(self, bounty_id: str, action: str) -> None:
+        """Platform admin resolves an ESCALATED bounty.
+
+        action must be one of:
+          "refund"  → 100 % escrow returned to owner
+          "payout"  → 100 % escrow sent to whitehat
+          "partial" → 25 % whitehat / 75 % owner (same as PARTIAL verdict)
+        """
+        if bounty_id not in self.bounties:
+            raise UserError("Bounty does not exist")
+
+        bounty = self.bounties[bounty_id]
+        if bounty.status != "ESCALATED":
+            raise UserError("Bounty is not in ESCALATED status")
+
+        caller = str(gl.message.sender_address).lower()
+        if caller != self.platform_admin:
+            raise UserError("Only platform admin can resolve escalated bounties")
+
+        action = action.lower().strip()
+        amount = bounty.reward_amount
+
+        if action == "refund":
+            gl.get_contract_at(Address(str(bounty.owner))).emit_transfer(value=amount)
+            bounty.status = "CLOSED"
+            bounty.ai_reason = bounty.ai_reason + " | Admin resolved: full refund to owner."
+
+        elif action == "payout":
+            if str(bounty.whitehat) == ZERO_ADDRESS:
+                raise UserError("No whitehat assigned; cannot payout")
+            gl.get_contract_at(Address(str(bounty.whitehat))).emit_transfer(value=amount)
+            bounty.status = "CLOSED"
+            bounty.ai_reason = bounty.ai_reason + " | Admin resolved: full payout to whitehat."
+
+        elif action == "partial":
+            if str(bounty.whitehat) == ZERO_ADDRESS:
+                raise UserError("No whitehat assigned; cannot partial payout")
+            payout_amt = amount // u256(4)
+            refund_amt = amount - payout_amt
+            gl.get_contract_at(Address(str(bounty.whitehat))).emit_transfer(value=payout_amt)
+            gl.get_contract_at(Address(str(bounty.owner))).emit_transfer(value=refund_amt)
+            bounty.status = "CLOSED"
+            bounty.ai_reason = bounty.ai_reason + " | Admin resolved: 25% whitehat / 75% owner."
+
+        else:
+            raise UserError("Invalid action. Must be 'refund', 'payout', or 'partial'.")
+
+        self.bounties[bounty_id] = bounty
+
+    # ── View Method ──────────────────────────────────────────
+
     @gl.public.view
     def get_all_bounties(self) -> str:
-        """API for Frontend dashboard rendering"""
+        """API for Frontend dashboard rendering."""
         result = []
         max_id = int(str(self.next_bounty_id))
         for i in range(1, max_id):
