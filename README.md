@@ -14,8 +14,8 @@
 
 ## Deployed Contract (studionet)
 
-- **Address:** `0x46eC201591A383CEe27D8ad893F0Ff63f641b799`
-- **Explorer Link:** [https://genlayer-explorer.vercel.app/address/0x46eC201591A383CEe27D8ad893F0Ff63f641b799](https://genlayer-explorer.vercel.app/address/0x46eC201591A383CEe27D8ad893F0Ff63f641b799)
+- **Address:** `0x02Ed16D013D8218ed8683bfa753d1911eb3bCac2`
+- **Explorer Link:** [https://genlayer-explorer.vercel.app/address/0x02Ed16D013D8218ed8683bfa753d1911eb3bCac2](https://genlayer-explorer.vercel.app/address/0x02Ed16D013D8218ed8683bfa753d1911eb3bCac2)
 
 ---
 
@@ -27,7 +27,7 @@ Existing Web3 Bug Bounty platforms (such as Immunefi) rely on human triagers to 
 1. **Project Owners** lock GEN token rewards into smart escrow and provide target source code URLs (GitHub / Gist).
 2. **Whitehat Hackers** submit vulnerability report URLs detailing exploit vectors.
 3. **GenVM AI (Acting as Senior Security Auditor)** autonomously renders the live code (`gl.nondet.web.render`), reads the report, and adjudicates validity (`gl.nondet.exec_prompt`).
-4. **On-Chain Settlement**: Rewards are disbursed automatically based on strict Leader-Validator consensus.
+4. **On-Chain Settlement**: Rewards are disbursed automatically based on strict Leader-Validator consensus (100% Payout, 25%/75% Partial, Reset Reject, or Admin Escalation Resolution).
 
 ---
 
@@ -39,7 +39,7 @@ Evaluating whether a complex security report accurately identifies a vulnerabili
 - 🔒 **404 Anti-Exploit Protection**:
   - **Anti-Rugpull (Protect Whitehat)**: If a Project Owner deletes target code during evaluation, GenVM AI automatically returns `ESCALATE` to prevent stealing whitehat research.
   - **Anti-Spam (Protect Owner)**: If a Whitehat submits a 404 dead link, GenVM AI automatically `REJECTS` and resets the bounty to `OPEN`.
-- ⚡ **Strict Verdict Consensus**: Leader and Validator nodes reach consensus by strictly comparing core verdicts (`PAYOUT`, `PARTIAL`, `REJECT`, `ESCALATE`), effectively ignoring minor LLM text formulation differences.
+- ⚡ **Strict Verdict Consensus**: Leader and Validator nodes reach consensus by strictly comparing effective verdicts (`PAYOUT`, `PARTIAL`, `REJECT`, `ESCALATE`), effectively ignoring minor LLM text formulation differences.
 
 ---
 
@@ -52,7 +52,7 @@ AuditorShield/
 ├── scripts/
 │   └── deploy.py                 # CLI & Python deployment utility
 ├── tests/
-│   └── test_auditor_shield.py    # Unit test suite verifying contract state & 404 protection
+│   └── test_auditor_shield.py    # Comprehensive Test Suite (19/19 tests covering all settlement paths)
 ├── frontend/                     # Full Cyberpunk Security Dashboard
 │   ├── src/
 │   │   ├── components/
@@ -65,7 +65,7 @@ AuditorShield/
 │   │   │   ├── Footer.tsx                    # Cyberpunk Project Footer
 │   │   │   └── ContractCodeModal.tsx         # In-dApp Intelligent Contract source viewer
 │   │   ├── types.ts                          # TypeScript interfaces & mock data
-│   │   ├── App.tsx                           # Main Dashboard App
+│   │   ├── App.tsx                           # Main Dashboard App (Confirmed RPC reads only)
 │   │   └── main.tsx                          # Entry point
 │   ├── package.json                          # Vite + React + Tailwind + GenLayer JS SDK
 │   └── vite.config.ts                        # Vite configuration
@@ -97,13 +97,14 @@ class Bounty:
 - `create_bounty(code_url: str, focus_area: str) -> str`: Deposit GEN reward into escrow vault.
 - `submit_report(bounty_id: str, report_url: str) -> None`: Whitehat submits vulnerability report link.
 - `adjudicate_report(bounty_id: str) -> None`: GenVM AI Leader-Validator non-deterministic evaluation & automatic payout disbursement.
+- `resolve_escalation(bounty_id: str, action: str) -> None`: Admin resolution for ESCALATED bounties (`refund`, `payout`, `partial`).
 - `get_all_bounties() -> str`: View method for frontend rendering.
 
 ---
 
 ## ⚡ Quickstart Guide for Judges
 
-### 1. Run Unit Tests
+### 1. Run Unit Tests (19/19 Tests)
 ```bash
 python tests/test_auditor_shield.py
 ```
