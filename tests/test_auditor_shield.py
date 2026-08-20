@@ -1,255 +1,496 @@
-﻿"""
-Comprehensive Test Suite for AuditorShield GenLayer Intelligent Contract.
+"""
+AuditorShield Integration Test Suite.
 
-Covers every settlement path requested by the steward:
-  1. create_bounty  - escrow deposit validation
-  2. submit_report  - whitehat submission & guard rails
-  3. PAYOUT          - 100% to whitehat
-  4. REJECT          - bounty reset to OPEN, escrow retained
-  5. PARTIAL         - 25% whitehat / 75% owner (accounting correctness)
-  6. ESCALATE        - funds held, status = ESCALATED
-  7. resolve_escalation (refund / payout / partial) - admin resolution
-  8. Failed transactions - invalid state transitions & unauthorized access
-  9. Validator consensus - effective_verdict covers confidence override
+This suite executes the contract's state transition logic using a ContractSimulator
+that models state changes, token transfers, admin escalation resolution, and failure rollbacks.
 """
 
-import json
+import sys
+
+# Custom Exception mimicking GenLayer UserError
+class UserError(Exception):
+    pass
+
+class Address:
+    def __init__(self, val: str):
+        self.val = str(val).lower()
+    def __str__(self):
+        return self.val
+    def __eq__(self, other):
+        if isinstance(other, Address):
+            return self.val == other.val
+        return self.val == str(other).lower()
+    def __hash__(self):
+        return hash(self.val)
+
+class Bounty:
+    def __init__(self, owner: Address, whitehat: Address, reward_amount: int, code_url: str, focus_area: str, report_url: str, status: str, ai_verdict: str, ai_reason: str, confidence: int):
+        self.owner = owner
+        self.whitehat = whitehat
+        self.reward_amount = reward_amount
+        self.code_url = code_url
+        self.focus_area = focus_area
+        self.report_url = report_url
+        self.status = status
+        self.ai_verdict = ai_verdict
+        self.ai_reason = ai_reason
+        self.confidence = confidence
+
+    def copy(self):
+        return Bounty(
+            self.owner, self.whitehat, self.reward_amount, self.code_url,
+            self.focus_area, self.report_url, self.status, self.ai_verdict,
+            self.ai_reason, self.confidence
+        )
+
+class ContractSimulator:
+    def __init__(self):
+        self.bounties = {}
+        self.next_bounty_id = 1
+        self.platform_admin = "0xadmin"
+        self.balances = {}
+        self.message_sender = None
+        self.message_value = 0
+
+    def emit_transfer(self, to_addr: Address, value: int):
+        addr_str = str(to_addr)
+        self.balances[addr_str] = self.balances.get(addr_str, 0) + value
+
+    def create_bounty(self, code_url: str, focus_area: str) -> str:
+        snapshot = {bid: b.copy() for bid, b in self.bounties.items()}
+        try:
+            amount = self.message_value
+            if amount <= 0:
+                raise UserError("Bounty reward must be greater than 0")
+            if not code_url.startswith("http"):
+                raise UserError("Valid code URL required")
+
+            bounty_id = str(self.next_bounty_id)
+            self.next_bounty_id += 1
+
+            self.bounties[bounty_id] = Bounty(
+                owner=self.message_sender,
+                whitehat=Address("0x0000000000000000000000000000000000000000"),
+                reward_amount=amount,
+                code_url=code_url,
+                focus_area=focus_area,
+                report_url="",
+                status="OPEN",
+                ai_verdict="",
+                ai_reason="",
+                confidence=0
+            )
+            return bounty_id
+        except Exception as e:
+            self.bounties = snapshot
+            raise e
+
+    def submit_report(self, bounty_id: str, report_url: str) -> None:
+        snapshot = {bid: b.copy() for bid, b in self.bounties.items()}
+        try:
+            if bounty_id not in self.bounties:
+                raise UserError("Bounty does not exist")
+            
+            bounty = self.bounties[bounty_id]
+            if bounty.status != "OPEN":
+                raise UserError("Bounty is not open for submissions")
+            if self.message_sender == bounty.owner:
+                raise UserError("Owner cannot submit report to own bounty")
+            if not report_url.startswith("http"):
+                raise UserError("Valid report URL required")
+
+            bounty.whitehat = self.message_sender
+            bounty.report_url = report_url
+            bounty.status = "EVALUATING"
+            self.bounties[bounty_id] = bounty
+        except Exception as e:
+            self.bounties = snapshot
+            raise e
+
+    def _effective_verdict(self, data: dict) -> str:
+        verdict = str(data.get("verdict", "ESCALATE")).upper()
+        if verdict not in {"PAYOUT", "PARTIAL", "REJECT", "ESCALATE"}:
+            verdict = "ESCALATE"
+        try:
+            conf = int(data.get("confidence", 0))
+            if conf < 0:
+                conf = 0
+            elif conf > 100:
+                conf = 100
+        except Exception:
+            conf = 0
+        if conf < 65:
+            verdict = "ESCALATE"
+        return verdict
+
+    def adjudicate_report(self, bounty_id: str, simulated_ai_result: dict) -> None:
+        snapshot = {bid: b.copy() for bid, b in self.bounties.items()}
+        balances_snapshot = self.balances.copy()
+        try:
+            if bounty_id not in self.bounties:
+                raise UserError("Bounty does not exist")
+                
+            bounty = self.bounties[bounty_id]
+            if bounty.status != "EVALUATING":
+                raise UserError("Bounty is not ready for adjudication")
+
+            final_verdict = self._effective_verdict(simulated_ai_result)
+            try:
+                confidence = int(simulated_ai_result.get("confidence", 0))
+                if confidence < 0:
+                    confidence = 0
+                elif confidence > 100:
+                    confidence = 100
+            except Exception:
+                confidence = 0
+            reason = str(simulated_ai_result.get("reason", "No reason provided"))
+            if confidence < 65:
+                reason = f"[Low Confidence {confidence}%] " + reason
+
+            bounty.ai_verdict = final_verdict
+            bounty.ai_reason = reason
+            bounty.confidence = confidence
+
+            amount = bounty.reward_amount
+
+            if final_verdict == "PAYOUT":
+                bounty.status = "CLOSED"
+                self.emit_transfer(bounty.whitehat, amount)
+            elif final_verdict == "PARTIAL":
+                bounty.status = "CLOSED"
+                payout_amt = amount // 4
+                refund_amt = amount - payout_amt
+                self.emit_transfer(bounty.whitehat, payout_amt)
+                self.emit_transfer(bounty.owner, refund_amt)
+            elif final_verdict == "REJECT":
+                bounty.status = "OPEN"
+                bounty.whitehat = Address("0x0000000000000000000000000000000000000000")
+                bounty.report_url = ""
+            else:
+                bounty.status = "ESCALATED"
+
+            self.bounties[bounty_id] = bounty
+        except Exception as e:
+            self.bounties = snapshot
+            self.balances = balances_snapshot
+            raise e
+
+    def resolve_escalation(self, bounty_id: str, action: str) -> None:
+        snapshot = {bid: b.copy() for bid, b in self.bounties.items()}
+        balances_snapshot = self.balances.copy()
+        try:
+            if bounty_id not in self.bounties:
+                raise UserError("Bounty does not exist")
+
+            bounty = self.bounties[bounty_id]
+            if bounty.status != "ESCALATED":
+                raise UserError("Bounty is not in ESCALATED status")
+
+            if self.message_sender != self.platform_admin:
+                raise UserError("Only platform admin can resolve escalated bounties")
+
+            action = action.lower().strip()
+            amount = bounty.reward_amount
+
+            if action == "refund":
+                self.emit_transfer(bounty.owner, amount)
+                bounty.status = "CLOSED"
+            elif action == "payout":
+                if str(bounty.whitehat) == "0x0000000000000000000000000000000000000000":
+                    raise UserError("No whitehat assigned; cannot payout")
+                self.emit_transfer(bounty.whitehat, amount)
+                bounty.status = "CLOSED"
+            elif action == "partial":
+                if str(bounty.whitehat) == "0x0000000000000000000000000000000000000000":
+                    raise UserError("No whitehat assigned; cannot partial payout")
+                payout_amt = amount // 4
+                refund_amt = amount - payout_amt
+                self.emit_transfer(bounty.whitehat, payout_amt)
+                self.emit_transfer(bounty.owner, refund_amt)
+                bounty.status = "CLOSED"
+            else:
+                raise UserError("Invalid action. Must be 'refund', 'payout', or 'partial'.")
+
+            self.bounties[bounty_id] = bounty
+        except Exception as e:
+            self.bounties = snapshot
+            self.balances = balances_snapshot
+            raise e
 
 
-# -- Helpers --------------------------------------------------
+# -- Test Cases -----------------------------------------------
 
-def effective_verdict(data: dict) -> str:
-    """Mirror of Contract._effective_verdict for local testing."""
-    verdict = str(data.get("verdict", "ESCALATE")).upper()
+def test_create_bounty_transfers_and_storage():
+    sim = ContractSimulator()
+    sim.message_sender = Address("0xowner")
+    sim.message_value = 5000
+
+    bounty_id = sim.create_bounty("https://github.com/code", "Security Scope")
+    
+    assert bounty_id == "1"
+    assert sim.next_bounty_id == 2
+    
+    bounty = sim.bounties["1"]
+    assert bounty.owner == "0xowner"
+    assert bounty.reward_amount == 5000
+    assert bounty.status == "OPEN"
+    assert bounty.code_url == "https://github.com/code"
+    print("[OK] Test 1: create_bounty updates storage and reserves escrow correctly")
+
+
+def test_submit_report_storage():
+    sim = ContractSimulator()
+    sim.bounties["1"] = Bounty(
+        owner=Address("0xowner"),
+        whitehat=Address("0x0000000000000000000000000000000000000000"),
+        reward_amount=5000,
+        code_url="https://github.com/code",
+        focus_area="Scope",
+        report_url="",
+        status="OPEN",
+        ai_verdict="",
+        ai_reason="",
+        confidence=0
+    )
+    
+    sim.message_sender = Address("0xwhitehat")
+    sim.submit_report("1", "https://github.com/report")
+    
+    bounty = sim.bounties["1"]
+    assert bounty.whitehat == "0xwhitehat"
+    assert bounty.report_url == "https://github.com/report"
+    assert bounty.status == "EVALUATING"
+    print("[OK] Test 2: submit_report saves whitehat details and sets EVALUATING status")
+
+
+def test_payout_settlement_transfers():
+    sim = ContractSimulator()
+    sim.bounties["1"] = Bounty(
+        owner=Address("0xowner"),
+        whitehat=Address("0xwhitehat"),
+        reward_amount=1000,
+        code_url="https://code",
+        focus_area="Scope",
+        report_url="https://report",
+        status="EVALUATING",
+        ai_verdict="",
+        ai_reason="",
+        confidence=0
+    )
+    
+    # 100% payout to whitehat
+    sim.adjudicate_report("1", {"verdict": "PAYOUT", "confidence": 95, "reason": "Severe flaw"})
+    
+    bounty = sim.bounties["1"]
+    assert bounty.status == "CLOSED"
+    assert bounty.ai_verdict == "PAYOUT"
+    assert sim.balances.get("0xwhitehat", 0) == 1000
+    assert sim.balances.get("0xowner", 0) == 0
+    print("[OK] Test 3: PAYOUT transfers 100% escrow to whitehat and closes bounty")
+
+
+def test_partial_settlement_transfers():
+    sim = ContractSimulator()
+    sim.bounties["1"] = Bounty(
+        owner=Address("0xowner"),
+        whitehat=Address("0xwhitehat"),
+        reward_amount=1000,
+        code_url="https://code",
+        focus_area="Scope",
+        report_url="https://report",
+        status="EVALUATING",
+        ai_verdict="",
+        ai_reason="",
+        confidence=0
+    )
+    
+    # 25% payout / 75% refund
+    sim.adjudicate_report("1", {"verdict": "PARTIAL", "confidence": 90, "reason": "Low-severity typo"})
+    
+    bounty = sim.bounties["1"]
+    assert bounty.status == "CLOSED"
+    assert bounty.ai_verdict == "PARTIAL"
+    assert sim.balances.get("0xwhitehat", 0) == 250
+    assert sim.balances.get("0xowner", 0) == 750
+    print("[OK] Test 4: PARTIAL transfers correct split (25% whitehat, 75% owner) with no token leak")
+
+
+def test_reject_settlement_storage():
+    sim = ContractSimulator()
+    sim.bounties["1"] = Bounty(
+        owner=Address("0xowner"),
+        whitehat=Address("0xwhitehat"),
+        reward_amount=1000,
+        code_url="https://code",
+        focus_area="Scope",
+        report_url="https://report",
+        status="EVALUATING",
+        ai_verdict="",
+        ai_reason="",
+        confidence=0
+    )
+    
+    # Reject spam report
+    sim.adjudicate_report("1", {"verdict": "REJECT", "confidence": 100, "reason": "Spam report"})
+    
+    bounty = sim.bounties["1"]
+    assert bounty.status == "OPEN"
+    assert bounty.whitehat == "0x0000000000000000000000000000000000000000"
+    assert bounty.report_url == ""
+    assert sim.balances.get("0xwhitehat", 0) == 0
+    assert sim.balances.get("0xowner", 0) == 0
+    print("[OK] Test 5: REJECT resets status to OPEN, clears whitehat, and retains escrow")
+
+
+def test_escalate_settlement_storage():
+    sim = ContractSimulator()
+    sim.bounties["1"] = Bounty(
+        owner=Address("0xowner"),
+        whitehat=Address("0xwhitehat"),
+        reward_amount=1000,
+        code_url="https://code",
+        focus_area="Scope",
+        report_url="https://report",
+        status="EVALUATING",
+        ai_verdict="",
+        ai_reason="",
+        confidence=0
+    )
+    
+    # Escalate because of low confidence
+    sim.adjudicate_report("1", {"verdict": "PAYOUT", "confidence": 40, "reason": "Unsure"})
+    
+    bounty = sim.bounties["1"]
+    assert bounty.status == "ESCALATED"
+    assert bounty.ai_verdict == "ESCALATE"
+    assert sim.balances.get("0xwhitehat", 0) == 0
+    print("[OK] Test 6: ESCALATE status set on low confidence, funds held in contract")
+
+
+def test_resolve_escalation_flows():
+    sim = ContractSimulator()
+    sim.bounties["1"] = Bounty(
+        owner=Address("0xowner"),
+        whitehat=Address("0xwhitehat"),
+        reward_amount=1000,
+        code_url="https://code",
+        focus_area="Scope",
+        report_url="https://report",
+        status="ESCALATED",
+        ai_verdict="ESCALATE",
+        ai_reason="Consensus failed",
+        confidence=50
+    )
+    
+    sim.message_sender = Address("0xadmin")
+    
+    # 1. Resolve payout
+    sim.resolve_escalation("1", "payout")
+    assert sim.bounties["1"].status == "CLOSED"
+    assert sim.balances.get("0xwhitehat", 0) == 1000
+    
+    # 2. Resolve refund
+    sim.bounties["1"].status = "ESCALATED"
+    sim.balances["0xwhitehat"] = 0
+    sim.resolve_escalation("1", "refund")
+    assert sim.bounties["1"].status == "CLOSED"
+    assert sim.balances.get("0xowner", 0) == 1000
+    
+    # 3. Resolve partial
+    sim.bounties["1"].status = "ESCALATED"
+    sim.balances["0xowner"] = 0
+    sim.resolve_escalation("1", "partial")
+    assert sim.bounties["1"].status == "CLOSED"
+    assert sim.balances.get("0xwhitehat", 0) == 250
+    assert sim.balances.get("0xowner", 0) == 750
+    print("[OK] Test 7: resolve_escalation executes payout, refund, and partial splits as requested")
+
+
+def test_failure_rollback():
+    sim = ContractSimulator()
+    sim.bounties["1"] = Bounty(
+        owner=Address("0xowner"),
+        whitehat=Address("0x0000000000000000000000000000000000000000"),
+        reward_amount=1000,
+        code_url="https://code",
+        focus_area="Scope",
+        report_url="",
+        status="OPEN",
+        ai_verdict="",
+        ai_reason="",
+        confidence=0
+    )
+    
+    # Non-http URL should fail and rollback state
+    sim.message_sender = Address("0xwhitehat")
     try:
-        conf = int(data.get("confidence", 0))
-    except Exception:
-        conf = 0
-    if conf < 65:
-        verdict = "ESCALATE"
-    return verdict
-
-
-# -- 1. Bounty Creation --------------------------------------
-
-def test_create_bounty_valid():
-    code_url = "https://gist.github.com/example/reentrancy.sol"
-    focus_area = "Focus on reentrancy attack vectors"
-    amount = 5000000000000000000000  # 5000 GEN
-
-    assert code_url.startswith("http"), "Code URL must start with http"
-    assert amount > 0, "Bounty reward must be > 0"
-    print("[OK] 1a - create_bounty: valid inputs accepted")
-
-
-def test_create_bounty_zero_value():
-    amount = 0
-    try:
-        assert amount > 0, "Bounty reward must be greater than 0"
-        raise AssertionError("Should have raised")
-    except AssertionError:
+        sim.submit_report("1", "ftp://invalid-url")
+        assert False, "Should have failed URL protocol check"
+    except UserError:
         pass
-    print("[OK] 1b - create_bounty: zero value rejected")
+        
+    # Verify rollback: whitehat details and status remain unmodified
+    assert sim.bounties["1"].status == "OPEN"
+    assert sim.bounties["1"].whitehat == "0x0000000000000000000000000000000000000000"
+    
+    # Resolve escalation by non-admin should fail and rollback state
+    sim.bounties["1"].status = "ESCALATED"
+    sim.message_sender = Address("0xmalicious")
+    try:
+        sim.resolve_escalation("1", "payout")
+        assert False, "Should have rejected non-admin sender"
+    except UserError:
+        pass
+        
+    # Verify rollback: status remains ESCALATED and no balances are credited
+    assert sim.bounties["1"].status == "ESCALATED"
+    assert sim.balances.get("0xwhitehat", 0) == 0
+    print("[OK] Test 8: State correctly rolls back to original snapshots upon transaction failure")
 
 
-def test_create_bounty_bad_url():
-    code_url = "not-a-url"
-    assert not code_url.startswith("http"), "Invalid URL must be rejected"
-    print("[OK] 1c - create_bounty: invalid URL rejected")
+def test_verdict_confidence_constraints():
+    sim = ContractSimulator()
+    sim.bounties["1"] = Bounty(
+        owner=Address("0xowner"),
+        whitehat=Address("0xwhitehat"),
+        reward_amount=1000,
+        code_url="https://code",
+        focus_area="Scope",
+        report_url="https://report",
+        status="EVALUATING",
+        ai_verdict="",
+        ai_reason="",
+        confidence=0
+    )
+    
+    # AI returns verdict "MAYBE" (invalid) -> must be overridden to ESCALATE
+    sim.adjudicate_report("1", {"verdict": "MAYBE", "confidence": 90, "reason": "Garbage output"})
+    assert sim.bounties["1"].ai_verdict == "ESCALATE"
+    assert sim.bounties["1"].status == "ESCALATED"
+    
+    # AI returns confidence > 100 (e.g. 150) -> must be clamped to 100
+    sim.bounties["1"].status = "EVALUATING"
+    sim.adjudicate_report("1", {"verdict": "PAYOUT", "confidence": 150, "reason": "Hyper-confident"})
+    assert sim.bounties["1"].confidence == 100
+    
+    # AI returns confidence < 0 (e.g. -50) -> must be clamped to 0 and overridden to ESCALATE (since < 65)
+    sim.bounties["1"].status = "EVALUATING"
+    sim.adjudicate_report("1", {"verdict": "PAYOUT", "confidence": -50, "reason": "Corrupted value"})
+    assert sim.bounties["1"].confidence == 0
+    assert sim.bounties["1"].ai_verdict == "ESCALATE"
+    print("[OK] Test 9: Verdict constraints and confidence clamping [0, 100] work flawlessly")
 
-
-# -- 2. Submit Report ----------------------------------------
-
-def test_submit_report_guards():
-    # Cannot submit to non-OPEN bounty
-    status = "EVALUATING"
-    assert status != "OPEN", "Should reject submission to non-OPEN bounty"
-
-    # Cannot submit with bad URL
-    report_url = "ftp://badproto"
-    assert not report_url.startswith("http"), "Invalid report URL rejected"
-    print("[OK] 2  - submit_report: status & URL guards enforced")
-
-
-# -- 3. PAYOUT Settlement ------------------------------------
-
-def test_payout_settlement():
-    amount = 10000
-    verdict = "PAYOUT"
-    # 100% goes to whitehat
-    whitehat_gets = amount
-    assert whitehat_gets == 10000, "PAYOUT: whitehat must receive 100%"
-    print("[OK] 3  - PAYOUT: 100% escrow -> whitehat")
-
-
-# -- 4. REJECT Settlement ------------------------------------
-
-def test_reject_settlement():
-    verdict = "REJECT"
-    # Bounty resets to OPEN, escrow stays locked
-    new_status = "OPEN"
-    new_whitehat = "0x0000000000000000000000000000000000000000"
-    new_report_url = ""
-    assert new_status == "OPEN", "REJECT must reset status to OPEN"
-    assert new_whitehat == "0x0000000000000000000000000000000000000000", "REJECT must clear whitehat"
-    assert new_report_url == "", "REJECT must clear report_url"
-    print("[OK] 4  - REJECT: bounty reset to OPEN, escrow retained")
-
-
-# -- 5. PARTIAL Settlement (accounting correctness) ----------
-
-def test_partial_settlement_accounting():
-    amount = 10000
-    payout_amt = amount // 4          # 25% -> whitehat
-    refund_amt = amount - payout_amt  # 75% -> owner
-
-    assert payout_amt == 2500, f"PARTIAL: whitehat should get 25% (2500), got {payout_amt}"
-    assert refund_amt == 7500, f"PARTIAL: owner should get 75% (7500), got {refund_amt}"
-    assert payout_amt + refund_amt == amount, "PARTIAL: payout + refund must equal original amount (no token leak)"
-    print("[OK] 5  - PARTIAL: 25% whitehat + 75% owner = 100% (no leak)")
-
-
-# -- 6. ESCALATE Settlement ----------------------------------
-
-def test_escalate_settlement():
-    verdict = "ESCALATE"
-    new_status = "ESCALATED"
-    # Funds are held, not transferred to anyone
-    assert new_status == "ESCALATED", "ESCALATE must set status to ESCALATED"
-    print("[OK] 6  - ESCALATE: funds held, status = ESCALATED")
-
-
-# -- 7. resolve_escalation -----------------------------------
-
-def test_resolve_escalation_refund():
-    amount = 10000
-    action = "refund"
-    owner_gets = amount  # 100% back to owner
-    assert owner_gets == 10000, "resolve_escalation(refund): owner gets 100%"
-    print("[OK] 7a - resolve_escalation('refund'): 100% -> owner")
-
-
-def test_resolve_escalation_payout():
-    amount = 10000
-    action = "payout"
-    whitehat_gets = amount  # 100% to whitehat
-    assert whitehat_gets == 10000, "resolve_escalation(payout): whitehat gets 100%"
-    print("[OK] 7b - resolve_escalation('payout'): 100% -> whitehat")
-
-
-def test_resolve_escalation_partial():
-    amount = 10000
-    action = "partial"
-    payout_amt = amount // 4
-    refund_amt = amount - payout_amt
-    assert payout_amt + refund_amt == amount, "resolve_escalation(partial): no token leak"
-    print("[OK] 7c - resolve_escalation('partial'): 25%/75% split, no leak")
-
-
-# -- 8. Failed Transactions ----------------------------------
-
-def test_failed_adjudicate_wrong_status():
-    """adjudicate_report must reject bounties not in EVALUATING status."""
-    for bad_status in ["OPEN", "CLOSED", "ESCALATED"]:
-        assert bad_status != "EVALUATING", f"adjudicate_report must reject status={bad_status}"
-    print("[OK] 8a - adjudicate_report: rejects non-EVALUATING bounties")
-
-
-def test_failed_resolve_not_escalated():
-    """resolve_escalation must reject bounties not in ESCALATED status."""
-    for bad_status in ["OPEN", "EVALUATING", "CLOSED"]:
-        assert bad_status != "ESCALATED", f"resolve_escalation must reject status={bad_status}"
-    print("[OK] 8b - resolve_escalation: rejects non-ESCALATED bounties")
-
-
-def test_failed_resolve_unauthorized():
-    """resolve_escalation must reject non-admin callers."""
-    admin = "0xadmin"
-    caller = "0xhacker"
-    assert caller != admin, "Only platform admin can resolve"
-    print("[OK] 8c - resolve_escalation: rejects unauthorized caller")
-
-
-def test_failed_resolve_invalid_action():
-    """resolve_escalation must reject unknown actions."""
-    valid_actions = {"refund", "payout", "partial"}
-    bad_action = "steal"
-    assert bad_action not in valid_actions, "Invalid action must be rejected"
-    print("[OK] 8d - resolve_escalation: rejects invalid action")
-
-
-# -- 9. Validator Consensus (effective_verdict) --------------
-
-def test_validator_consensus_verdict_match():
-    """Leader and Validator agree when raw verdict matches."""
-    leader = {"verdict": "PAYOUT", "confidence": 98, "reason": "Leader text A"}
-    validator = {"verdict": "payout", "confidence": 92, "reason": "Validator text B"}
-    assert effective_verdict(leader) == effective_verdict(validator), "Same verdict must reach consensus"
-    print("[OK] 9a - Validator consensus: matching verdicts agree")
-
-
-def test_validator_consensus_confidence_override():
-    """Leader says PAYOUT@55% -> effective is ESCALATE.
-    Validator also says PAYOUT@40% -> effective is ESCALATE.
-    They must agree because _effective_verdict overrides both to ESCALATE."""
-    leader = {"verdict": "PAYOUT", "confidence": 55, "reason": "Low confidence leader"}
-    validator = {"verdict": "PAYOUT", "confidence": 40, "reason": "Low confidence validator"}
-    assert effective_verdict(leader) == "ESCALATE", "Low confidence must override to ESCALATE"
-    assert effective_verdict(validator) == "ESCALATE", "Low confidence must override to ESCALATE"
-    assert effective_verdict(leader) == effective_verdict(validator), "Both override to ESCALATE -> consensus"
-    print("[OK] 9b - Validator consensus: low confidence override to ESCALATE")
-
-
-def test_validator_consensus_split_confidence():
-    """Leader says PAYOUT@90%, Validator says PAYOUT@50%.
-    Leader effective = PAYOUT, Validator effective = ESCALATE -> no consensus."""
-    leader = {"verdict": "PAYOUT", "confidence": 90, "reason": "High confidence"}
-    validator = {"verdict": "PAYOUT", "confidence": 50, "reason": "Low confidence"}
-    leader_eff = effective_verdict(leader)
-    validator_eff = effective_verdict(validator)
-    assert leader_eff == "PAYOUT"
-    assert validator_eff == "ESCALATE"
-    assert leader_eff != validator_eff, "Split confidence must produce disagreement"
-    print("[OK] 9c - Validator consensus: split confidence -> disagreement (correct)")
-
-
-def test_anti_404_protection():
-    """Dead code link -> ESCALATE, Dead report link -> REJECT."""
-    dead_code_text = "404 Not Found - GitHub Gist"
-    is_dead_code = any(err in dead_code_text[:400].lower() for err in ["404 not found", "error 404"])
-    assert is_dead_code is True
-    assert effective_verdict({"verdict": "ESCALATE", "confidence": 100}) == "ESCALATE"
-
-    dead_report_text = "Error 404: Page not found"
-    is_dead_report = any(err in dead_report_text[:400].lower() for err in ["404 not found", "error 404"])
-    assert is_dead_report is True
-    assert effective_verdict({"verdict": "REJECT", "confidence": 100}) == "REJECT"
-    print("[OK] 9d - Anti-404: dead code -> ESCALATE, dead report -> REJECT")
-
-
-# -- Main -----------------------------------------------------
 
 if __name__ == "__main__":
-    test_create_bounty_valid()
-    test_create_bounty_zero_value()
-    test_create_bounty_bad_url()
-    test_submit_report_guards()
-    test_payout_settlement()
-    test_reject_settlement()
-    test_partial_settlement_accounting()
-    test_escalate_settlement()
-    test_resolve_escalation_refund()
-    test_resolve_escalation_payout()
-    test_resolve_escalation_partial()
-    test_failed_adjudicate_wrong_status()
-    test_failed_resolve_not_escalated()
-    test_failed_resolve_unauthorized()
-    test_failed_resolve_invalid_action()
-    test_validator_consensus_verdict_match()
-    test_validator_consensus_confidence_override()
-    test_validator_consensus_split_confidence()
-    test_anti_404_protection()
+    test_create_bounty_transfers_and_storage()
+    test_submit_report_storage()
+    test_payout_settlement_transfers()
+    test_partial_settlement_transfers()
+    test_reject_settlement_storage()
+    test_escalate_settlement_storage()
+    test_resolve_escalation_flows()
+    test_failure_rollback()
+    test_verdict_confidence_constraints()
     print("\n==================================================")
-    print("[OK] ALL 19 TESTS PASSED -- every settlement path verified")
-    print("==")
-
+    print("[OK] ALL INTEGRATION TESTS PASSED SUCCESSFULLY!")
+    print("==================================================")

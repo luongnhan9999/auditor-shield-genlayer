@@ -105,9 +105,9 @@ export default function App() {
 
     if (mode === 'RPC' && contractAddress) {
       setTxPending(true);
-      setTxMessage('Sending create_bounty transaction to GenLayer Studionet contract...');
+      setTxMessage('Sending create_bounty transaction and waiting for finality...');
       try {
-        await writeContractOnChain(contractAddress, 'create_bounty', [codeUrl, focusArea], valueWei, network);
+        await writeContractOnChain(contractAddress, 'create_bounty', [codeUrl, focusArea], valueWei, network, account);
         setTxMessage('Transaction confirmed on GenLayer Studionet!');
         setTimeout(() => setTxMessage(''), 3000);
         // RPC mode: re-fetch from confirmed contract reads only
@@ -142,9 +142,9 @@ export default function App() {
   const handleSubmitReport = async (bountyId: string, reportUrl: string) => {
     if (mode === 'RPC' && contractAddress) {
       setTxPending(true);
-      setTxMessage('Sending submit_report transaction to GenLayer Studionet contract...');
+      setTxMessage('Sending submit_report transaction and waiting for finality...');
       try {
-        await writeContractOnChain(contractAddress, 'submit_report', [bountyId, reportUrl], '0', network);
+        await writeContractOnChain(contractAddress, 'submit_report', [bountyId, reportUrl], '0', network, account);
         setTxMessage('Report transaction confirmed on GenLayer Studionet!');
         setTimeout(() => setTxMessage(''), 3000);
         // RPC mode: re-fetch from confirmed contract reads only
@@ -181,9 +181,9 @@ export default function App() {
 
     if (mode === 'RPC' && contractAddress) {
       setTxPending(true);
-      setTxMessage('Sending adjudicate_report AI consensus transaction to GenLayer Studionet...');
+      setTxMessage('Sending adjudicate_report AI consensus transaction and waiting for finality...');
       try {
-        await writeContractOnChain(contractAddress, 'adjudicate_report', [bountyId], '0', network);
+        await writeContractOnChain(contractAddress, 'adjudicate_report', [bountyId], '0', network, account);
         setTxMessage('GenVM AI Adjudication transaction confirmed!');
         setTimeout(() => setTxMessage(''), 3000);
         // RPC mode: re-fetch from confirmed contract reads only

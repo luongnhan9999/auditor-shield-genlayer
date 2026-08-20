@@ -46,12 +46,18 @@ class Contract(gl.Contract):
             return {"verdict": "ESCALATE", "confidence": 0, "reason": f"Parse error: {str(e)}"}
 
     def _effective_verdict(self, data: dict) -> str:
-        """Derive the final verdict after applying the low-confidence override.
+        """Derive the final verdict after applying constraints and low-confidence override.
         This must be identical in leader_fn and validator_fn so that the
         validator agrees on every field that can change settlement."""
         verdict = str(data.get("verdict", "ESCALATE")).upper()
+        if verdict not in {"PAYOUT", "PARTIAL", "REJECT", "ESCALATE"}:
+            verdict = "ESCALATE"
         try:
             conf = int(data.get("confidence", 0))
+            if conf < 0:
+                conf = 0
+            elif conf > 100:
+                conf = 100
         except Exception:
             conf = 0
         if conf < 65:
@@ -199,6 +205,10 @@ Respond ONLY with a JSON object:
         final_verdict = self._effective_verdict(result)
         try:
             confidence = int(result.get("confidence", 0))
+            if confidence < 0:
+                confidence = 0
+            elif confidence > 100:
+                confidence = 100
         except Exception:
             confidence = 0
         reason = str(result.get("reason", "No reason provided"))

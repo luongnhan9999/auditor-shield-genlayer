@@ -18,11 +18,16 @@ export function getGenLayerChain(network: GenLayerNetwork) {
   }
 }
 
-export function getGenLayerClient(network: GenLayerNetwork = 'studionet', rpcUrl?: string) {
+export function getGenLayerClient(
+  network: GenLayerNetwork = 'studionet',
+  account?: string,
+  rpcUrl?: string
+) {
   const chain = getGenLayerChain(network);
   return createClient({
     chain,
     endpoint: rpcUrl || undefined,
+    account: account as `0x${string}` || undefined,
   });
 }
 
@@ -39,7 +44,7 @@ export async function readBountiesFromChain(
   }
 
   try {
-    const client = getGenLayerClient(network, rpcUrl);
+    const client = getGenLayerClient(network, undefined, rpcUrl);
     const rawResult = await client.readContract({
       address: contractAddress as `0x${string}`,
       functionName: 'get_all_bounties',
@@ -77,16 +82,18 @@ export async function readBountiesFromChain(
 }
 
 /**
- * Execute contract transaction on GenLayer Testnet / StudioNet
+ * Execute contract transaction on GenLayer Testnet / StudioNet and wait for finality
  */
 export async function writeContractOnChain(
   contractAddress: string,
   functionName: string,
   args: any[],
   valueWei: string = '0',
-  network: GenLayerNetwork = 'studionet'
-): Promise<string> {
-  const client = getGenLayerClient(network);
+  network: GenLayerNetwork = 'studionet',
+  account?: string
+): Promise<{ txHash: string; status: string }> {
+  // Connect the user's signer/provider to the GenLayer RPC client
+  const client = getGenLayerClient(network, account);
   try {
     const txHash = await client.writeContract({
       address: contractAddress as `0x${string}`,
@@ -94,7 +101,19 @@ export async function writeContractOnChain(
       args,
       value: BigInt(valueWei),
     });
-    return String(txHash);
+
+    console.log(`Transaction sent. Hash: ${txHash}. Waiting for finality (receipt)...`);
+    // Wait for transaction finality (receipt status)
+    const receipt = await client.waitForTransactionReceipt({
+      hash: txHash,
+      status: 'ACCEPTED' as any,
+    });
+
+    console.log(`Transaction finality reached! Status: ${receipt.statusName || receipt.status}`);
+    return {
+      txHash: String(txHash),
+      status: String(receipt.statusName || receipt.status),
+    };
   } catch (error) {
     console.warn(`GenLayer writeContract (${functionName}) warning:`, error);
     throw error;
