@@ -14,8 +14,8 @@
 
 ## Deployed Contract (studionet)
 
-- **Address:** `0xC4EeB94b51471d26BA65063Ff0F3673BE2fC3126`
-- **Explorer Link:** [https://genlayer-explorer.vercel.app/address/0xC4EeB94b51471d26BA65063Ff0F3673BE2fC3126](https://genlayer-explorer.vercel.app/address/0xC4EeB94b51471d26BA65063Ff0F3673BE2fC3126)
+- **Address:** `0x496bc70d0c5F1315b08feb6086c40F6e10EB7d0a`
+- **Explorer Link:** [https://genlayer-explorer.vercel.app/address/0x496bc70d0c5F1315b08feb6086c40F6e10EB7d0a](https://genlayer-explorer.vercel.app/address/0x496bc70d0c5F1315b08feb6086c40F6e10EB7d0a)
 
 ---
 
