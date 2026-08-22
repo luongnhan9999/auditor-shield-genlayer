@@ -20,14 +20,14 @@ export function getGenLayerChain(network: GenLayerNetwork) {
 
 export function getGenLayerClient(
   network: GenLayerNetwork = 'studionet',
-  account?: string,
   rpcUrl?: string
 ) {
   const chain = getGenLayerChain(network);
   return createClient({
     chain,
     endpoint: rpcUrl || undefined,
-    account: account as `0x${string}` || undefined,
+    // Connect browser wallet provider (EIP-1193) for wallet signer support
+    provider: typeof window !== 'undefined' ? window.ethereum : undefined,
   });
 }
 
@@ -44,7 +44,7 @@ export async function readBountiesFromChain(
   }
 
   try {
-    const client = getGenLayerClient(network, undefined, rpcUrl);
+    const client = getGenLayerClient(network, rpcUrl);
     const rawResult = await client.readContract({
       address: contractAddress as `0x${string}`,
       functionName: 'get_all_bounties',
@@ -92,14 +92,16 @@ export async function writeContractOnChain(
   network: GenLayerNetwork = 'studionet',
   account?: string
 ): Promise<{ txHash: string; status: string }> {
-  // Connect the user's signer/provider to the GenLayer RPC client
-  const client = getGenLayerClient(network, account);
+  // Config client without config.account to keep isAddress=true for custom transport interception
+  const client = getGenLayerClient(network);
   try {
     const txHash = await client.writeContract({
       address: contractAddress as `0x${string}`,
       functionName,
       args,
       value: BigInt(valueWei),
+      // Pass viem-like Account object to writeContract to populate formattedRequest.from correctly
+      account: account ? ({ address: account as `0x${string}` } as any) : undefined,
     });
 
     console.log(`Transaction sent. Hash: ${txHash}. Waiting for finality (receipt)...`);
