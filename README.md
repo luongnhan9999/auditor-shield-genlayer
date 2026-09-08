@@ -14,8 +14,8 @@
 
 ## Deployed Contract (studionet)
 
-- **Address:** `0x496bc70d0c5F1315b08feb6086c40F6e10EB7d0a`
-- **Explorer Link:** [https://genlayer-explorer.vercel.app/address/0x496bc70d0c5F1315b08feb6086c40F6e10EB7d0a](https://genlayer-explorer.vercel.app/address/0x496bc70d0c5F1315b08feb6086c40F6e10EB7d0a)
+- **Address:** `0x298351899A3420D71b92F8a5710DcE36d12ec551`
+- **Explorer Link:** [https://genlayer-explorer.vercel.app/address/0x298351899A3420D71b92F8a5710DcE36d12ec551](https://genlayer-explorer.vercel.app/address/0x298351899A3420D71b92F8a5710DcE36d12ec551)
 
 ---
 
@@ -48,7 +48,7 @@ Evaluating whether a complex security report accurately identifies a vulnerabili
 ## 🛡️ Milestone Progress (v1.1.0 Upgrade)
 - **AI Enhancement**: Upgraded GenVM prompt to a 3-lens multi-perspective evaluation schema.
 - **Security Hardening**: Integrated canary token protocol and adversarial input sanitization against prompt injection.
-- **Test Suite**: 10/10 automated contract execution tests passing (including dedicated prompt injection attack simulations).
+- **Test Suite**: 12/12 automated contract execution tests passing (including prompt injection and dispute window verification).
 - **Documentation**: Added [`SECURITY.md`](file:///c:/Users/Admin/Documents/genlayer/AuditorShield/SECURITY.md) and [`CHANGELOG.md`](file:///c:/Users/Admin/Documents/genlayer/AuditorShield/CHANGELOG.md).
 
 ---
