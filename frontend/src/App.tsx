@@ -13,7 +13,7 @@ import type { Bounty } from './types';
 import { DEMO_SCENARIOS, DEFAULT_CONTRACT_ADDRESS } from './types';
 import { setupWalletListeners, autoCheckWalletConnection, saveWalletState } from './utils/web3';
 import { readBountiesFromChain, writeContractOnChain, type GenLayerNetwork } from './utils/genlayer';
-import { ShieldCheck, Filter, Sparkles, Terminal as TerminalIcon, RefreshCw, Plus, Play, Info, ExternalLink, Cpu, CheckCircle } from 'lucide-react';
+import { ShieldCheck, Filter, Sparkles, Terminal as TerminalIcon, RefreshCw, Plus, Play, Info, ExternalLink, Cpu, CheckCircle, Lock } from 'lucide-react';
 
 export default function App() {
   // Mode: 'DEMO' for instant 1-click interactive test bench, 'RPC' for live contract connection
@@ -283,6 +283,10 @@ export default function App() {
               <div className="flex items-center space-x-2 bg-slate-950/80 px-3 py-1.5 rounded-lg border border-slate-800">
                 <TerminalIcon className="w-4 h-4 text-emerald-400" />
                 <span>Strict Verdict Consensus</span>
+              </div>
+              <div className="flex items-center space-x-2 bg-slate-950/80 px-3 py-1.5 rounded-lg border border-cyan-500/40 text-cyan-300">
+                <Lock className="w-4 h-4 text-cyan-400" />
+                <span>Canary Token & Prompt Injection Defense (v1.1)</span>
               </div>
             </div>
           </div>

@@ -40,6 +40,16 @@ Evaluating whether a complex security report accurately identifies a vulnerabili
   - **Anti-Rugpull (Protect Whitehat)**: If a Project Owner deletes target code during evaluation, GenVM AI automatically returns `ESCALATE` to prevent stealing whitehat research.
   - **Anti-Spam (Protect Owner)**: If a Whitehat submits a 404 dead link, GenVM AI automatically `REJECTS` and resets the bounty to `OPEN`.
 - ⚡ **Strict Verdict Consensus**: Leader and Validator nodes reach consensus by strictly comparing effective verdicts (`PAYOUT`, `PARTIAL`, `REJECT`, `ESCALATE`), effectively ignoring minor LLM text formulation differences.
+- 🛡️ **Canary Token & Prompt Injection Defense (Milestone 1)**: Enforces cryptographic canary token verification (`CANARY_AUTH_SECURE_VERIFIED`) and sanitizes user input, immediately holding funds in `ESCALATE` if prompt hijacking is attempted.
+- 🔬 **Multi-Perspective AI Reasoning (Milestone 1)**: Evaluates each report through 3 analytical lenses (Forensic Code Verification → Skeptical Validation → Settlement Determination) before locking in consensus.
+
+---
+
+## 🛡️ Milestone Progress (v1.1.0 Upgrade)
+- **AI Enhancement**: Upgraded GenVM prompt to a 3-lens multi-perspective evaluation schema.
+- **Security Hardening**: Integrated canary token protocol and adversarial input sanitization against prompt injection.
+- **Test Suite**: 10/10 automated contract execution tests passing (including dedicated prompt injection attack simulations).
+- **Documentation**: Added [`SECURITY.md`](file:///c:/Users/Admin/Documents/genlayer/AuditorShield/SECURITY.md) and [`CHANGELOG.md`](file:///c:/Users/Admin/Documents/genlayer/AuditorShield/CHANGELOG.md).
 
 ---
 
