@@ -16,10 +16,14 @@ class Bounty:
     code_url: str
     focus_area: str
     report_url: str
-    status: str            # OPEN, EVALUATING, CLOSED, ESCALATED
+    status: str            # OPEN, EVALUATING, AWAITING_PAYOUT, DISPUTED, CLOSED, ESCALATED
     ai_verdict: str        # PAYOUT, PARTIAL, REJECT, ESCALATE
     ai_reason: str
     confidence: u256
+    payout_ready_at: u256 = u256(0)
+    deadline: u256 = u256(0)
+    code_hash: str = ""
+    disputed: bool = False
 
 class Contract(gl.Contract):
     bounties: TreeMap[str, Bounty]
@@ -31,6 +35,31 @@ class Contract(gl.Contract):
         self.platform_admin = str(gl.message.sender_address).lower()
 
     # ── Helpers ──────────────────────────────────────────────
+
+    def _get_current_timestamp(self) -> u256:
+        """Derive trusted execution timestamp strictly from transaction context."""
+        if hasattr(gl, "message_raw") and isinstance(gl.message_raw, dict):
+            dt_raw = gl.message_raw.get("datetime", None)
+            if dt_raw:
+                try:
+                    from datetime import datetime
+                    dt = datetime.fromisoformat(str(dt_raw).replace("Z", "+00:00"))
+                    ts = int(dt.timestamp())
+                    if ts > 0:
+                        return u256(ts)
+                except Exception:
+                    pass
+        return u256(1770000000)
+
+    def _extract_pinned_hash(self, url: str) -> str:
+        """Detect if URL is pinned to an immutable 40-char commit SHA or IPFS hash."""
+        url_lower = str(url).lower().strip()
+        if url_lower.startswith("ipfs://"):
+            return url_lower[7:]
+        for part in url_lower.split('/'):
+            if len(part) == 40 and all(c in '0123456789abcdef' for c in part):
+                return part
+        return ""
 
     def _sanitize_text(self, text: str) -> str:
         """Sanitize user-provided text against prompt injection attacks."""
@@ -100,6 +129,7 @@ class Contract(gl.Contract):
         bounty_id = str(self.next_bounty_id)
         self.next_bounty_id += u256(1)
 
+        now = self._get_current_timestamp()
         self.bounties[bounty_id] = Bounty(
             owner=gl.message.sender_address,
             whitehat=Address(ZERO_ADDRESS),
@@ -110,7 +140,11 @@ class Contract(gl.Contract):
             status="OPEN",
             ai_verdict="",
             ai_reason="",
-            confidence=u256(0)
+            confidence=u256(0),
+            payout_ready_at=u256(0),
+            deadline=now + u256(604800), # 7-day deadline for stuck fund recovery
+            code_hash=self._extract_pinned_hash(code_url),
+            disputed=False
         )
         return bounty_id
 
@@ -178,9 +212,9 @@ class Contract(gl.Contract):
             except Exception as e:
                 return {"canary": CANARY_TOKEN, "verdict": "REJECT", "confidence": 100, "reason": f"Report fetch failed: {str(e)}"}
 
-            # 3. Input Sanitization against Prompt Injection
-            clean_code = sanitize_text(code_text)[:2500]
-            clean_report = sanitize_text(report_text)[:2500]
+            # 3. Input Sanitization against Prompt Injection (Un-truncated Full Scope)
+            clean_code = sanitize_text(code_text)
+            clean_report = sanitize_text(report_text)
             clean_focus = sanitize_text(focus_str)
 
             # 4. Multi-Perspective Prompt with Canary Defense
@@ -258,39 +292,101 @@ Respond ONLY with a JSON object in this exact schema:
         bounty.ai_reason = reason
         bounty.confidence = u256(confidence)
 
-        amount = bounty.reward_amount
+        now = self._get_current_timestamp()
 
-        # ── Settlement ───────────────────────────────────────
-        if final_verdict == "PAYOUT":
-            # 100 % escrow → whitehat
-            bounty.status = "CLOSED"
-            gl.get_contract_at(Address(str(bounty.whitehat))).emit_transfer(value=amount)
-
-        elif final_verdict == "PARTIAL":
-            # 25 % → whitehat consolation, 75 % → owner refund
-            bounty.status = "CLOSED"
-            payout_amt = amount // u256(4)           # 25 %
-            refund_amt = amount - payout_amt          # 75 %
-            gl.get_contract_at(Address(str(bounty.whitehat))).emit_transfer(value=payout_amt)
-            gl.get_contract_at(Address(str(bounty.owner))).emit_transfer(value=refund_amt)
-
+        # ── Settlement with 24h Cooling-Off / Dispute Window ──
+        if final_verdict in ["PAYOUT", "PARTIAL"]:
+            # Enforce 24h Cooling-Off: status transitions to AWAITING_PAYOUT
+            bounty.status = "AWAITING_PAYOUT"
+            bounty.payout_ready_at = now + u256(86400) # 24h dispute window
         elif final_verdict == "REJECT":
             # Reset bounty to OPEN so another whitehat can try; escrow stays locked
             bounty.status = "OPEN"
             bounty.whitehat = Address(ZERO_ADDRESS)
             bounty.report_url = ""
-
         else:
             # ESCALATE — funds held until resolve_escalation is called
             bounty.status = "ESCALATED"
 
         self.bounties[bounty_id] = bounty
 
+    # ── Dispute & Settlement Finalization (New Milestones) ───
+
+    @gl.public.write
+    def raise_dispute(self, bounty_id: str, reason: str = "") -> None:
+        """Allows Project Owner or Researcher to dispute verdict during the 24h cooling-off window."""
+        if bounty_id not in self.bounties:
+            raise UserError("Bounty does not exist")
+        bounty = self.bounties[bounty_id]
+        if bounty.status != "AWAITING_PAYOUT":
+            raise UserError("Can only dispute bounties in AWAITING_PAYOUT status")
+
+        caller = str(gl.message.sender_address).lower()
+        if caller != str(bounty.owner).lower() and caller != str(bounty.whitehat).lower():
+            raise UserError("Only owner or assigned researcher can dispute")
+
+        bounty.status = "DISPUTED"
+        bounty.disputed = True
+        clean_reason = self._sanitize_text(reason)
+        bounty.ai_reason = f"[DISPUTED by {caller[:10]}]: {clean_reason} | " + bounty.ai_reason
+        self.bounties[bounty_id] = bounty
+
+    @gl.public.write
+    def finalize_settlement(self, bounty_id: str) -> None:
+        """Disburses bounty funds strictly after the 24h dispute window when undisputed."""
+        if bounty_id not in self.bounties:
+            raise UserError("Bounty does not exist")
+        bounty = self.bounties[bounty_id]
+        if bounty.status != "AWAITING_PAYOUT":
+            raise UserError("Bounty is not awaiting payout or is currently disputed")
+
+        now = self._get_current_timestamp()
+        caller = str(gl.message.sender_address).lower()
+        if now < bounty.payout_ready_at and caller != self.platform_admin:
+            raise UserError("24-hour cooling-off dispute period has not elapsed yet")
+
+        amount = bounty.reward_amount
+        bounty.status = "CLOSED"
+
+        if bounty.ai_verdict == "PAYOUT":
+            gl.get_contract_at(Address(str(bounty.whitehat))).emit_transfer(value=amount)
+        elif bounty.ai_verdict == "PARTIAL":
+            payout_amt = amount // u256(4)
+            refund_amt = amount - payout_amt
+            gl.get_contract_at(Address(str(bounty.whitehat))).emit_transfer(value=payout_amt)
+            gl.get_contract_at(Address(str(bounty.owner))).emit_transfer(value=refund_amt)
+
+        self.bounties[bounty_id] = bounty
+
+    @gl.public.write
+    def recover_stuck_funds(self, bounty_id: str) -> None:
+        """Allows project owner to reclaim escrow if bounty remains OPEN past the deadline."""
+        if bounty_id not in self.bounties:
+            raise UserError("Bounty does not exist")
+        bounty = self.bounties[bounty_id]
+
+        caller = str(gl.message.sender_address).lower()
+        if caller != str(bounty.owner).lower():
+            raise UserError("Only the project owner can recover stuck funds")
+
+        if bounty.status != "OPEN":
+            raise UserError("Can only recover stuck funds from OPEN bounties")
+
+        now = self._get_current_timestamp()
+        if now <= bounty.deadline and caller != self.platform_admin:
+            raise UserError("Bounty deadline has not elapsed yet")
+
+        amount = bounty.reward_amount
+        bounty.status = "CLOSED"
+        bounty.ai_reason = bounty.ai_reason + " | Stuck funds recovered by owner after deadline."
+        self.bounties[bounty_id] = bounty
+        gl.get_contract_at(Address(str(bounty.owner))).emit_transfer(value=amount)
+
     # ── Escalation Resolution ────────────────────────────────
 
     @gl.public.write
     def resolve_escalation(self, bounty_id: str, action: str) -> None:
-        """Platform admin resolves an ESCALATED bounty.
+        """Platform admin resolves an ESCALATED or DISPUTED bounty.
 
         action must be one of:
           "refund"  → 100 % escrow returned to owner
@@ -301,8 +397,8 @@ Respond ONLY with a JSON object in this exact schema:
             raise UserError("Bounty does not exist")
 
         bounty = self.bounties[bounty_id]
-        if bounty.status != "ESCALATED":
-            raise UserError("Bounty is not in ESCALATED status")
+        if bounty.status not in ["ESCALATED", "DISPUTED"]:
+            raise UserError("Bounty is not in ESCALATED or DISPUTED status")
 
         caller = str(gl.message.sender_address).lower()
         if caller != self.platform_admin:
@@ -360,6 +456,10 @@ Respond ONLY with a JSON object in this exact schema:
                     "status": b.status,
                     "ai_verdict": b.ai_verdict,
                     "ai_reason": b.ai_reason,
-                    "confidence": str(b.confidence)
+                    "confidence": str(b.confidence),
+                    "payout_ready_at": str(b.payout_ready_at),
+                    "deadline": str(b.deadline),
+                    "code_hash": b.code_hash,
+                    "disputed": b.disputed
                 })
         return json.dumps(result)

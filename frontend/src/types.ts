@@ -6,10 +6,14 @@ export interface Bounty {
   code_url: string;
   focus_area: string;
   report_url: string;
-  status: 'OPEN' | 'EVALUATING' | 'CLOSED' | 'ESCALATED';
+  status: 'OPEN' | 'EVALUATING' | 'AWAITING_PAYOUT' | 'DISPUTED' | 'CLOSED' | 'ESCALATED';
   ai_verdict: 'PAYOUT' | 'PARTIAL' | 'REJECT' | 'ESCALATE' | '';
   ai_reason: string;
   confidence: string;
+  payout_ready_at?: string;
+  deadline?: string;
+  code_hash?: string;
+  disputed?: boolean;
 }
 
 // Interactive Test Bench Scenarios (Showcases all 4 GenVM AI Verdicts for Judges)

@@ -9,13 +9,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 *Date: 2026-09-08*
 
 ### 🚀 Major Improvements
+- **24-Hour Dispute Cooling-Off Window (`raise_dispute` & `finalize_settlement`)**: When AI adjudicates a bounty, funds are placed into an `AWAITING_PAYOUT` state locked for 24 hours (`payout_ready_at`), granting both project owner and whitehat the right to dispute before tokens leave escrow.
+- **Un-truncated Full-Scope Evaluation**: Removed all hardcoded 2500-character string slicing; the GenVM LLM now evaluates the complete code file and submission report without truncation.
+- **Stuck Fund Recovery (`recover_stuck_funds`)**: Project owners can reclaim 100% of their locked escrow if a bounty remains `OPEN` past its deadline, preventing permanent fund lock.
 - **Prompt Injection Canary Defense**: Implemented an on-chain canary token protocol (`CANARY_AUTH_SECURE_VERIFIED`). Any response lacking or tampering with the verification canary immediately defaults to `ESCALATE`, neutralizing prompt override attacks and protecting escrow funds.
-- **Multi-Perspective AI Prompting**: Structured the GenVM LLM adjudication engine into 3 distinct analytical lenses:
-  - *Lens 1 (Forensic)*: Validates code existence and root cause.
-  - *Lens 2 (Skeptical)*: Filters hallucinations, spam, and informational suggestions.
-  - *Lens 3 (Settlement)*: Assigns final verdict and confidence score.
-- **Adversarial Input Sanitization**: Added `_sanitize_text` to automatically strip common prompt injection phrases (e.g., `"ignore previous instructions"`, `"always output payout"`) before sending calldata to GenVM LLMs.
-- **Contract-Level Test Suite Expansion**: Added dedicated tests for prompt injection interception (`test_prompt_injection_canary_defense`) and input sanitization (`test_prompt_injection_sanitization`), bringing total automated contract execution tests to 10/10 passing.
+- **Multi-Perspective AI Prompting**: Structured the GenVM LLM adjudication engine into 3 distinct analytical lenses (Forensic Code Verification -> Skeptical Validation -> Settlement Determination).
+- **Adversarial Input Sanitization**: Added `_sanitize_text` to automatically strip common prompt injection phrases before sending calldata to GenVM LLMs.
+- **Immutable URL Revision Detection**: Added `_extract_pinned_hash` detecting 40-char commit SHAs or IPFS hashes, providing full support for permanent code references while remaining backwards-compatible.
+- **Expanded Contract-Level Test Suite (12/12 Passing)**: Added tests for 24h dispute freeze, post-deadline stuck fund recovery, prompt injection interception, and input sanitization.
 - **Security & Threat Model Documentation**: Published `SECURITY.md` detailing protocol threat vectors, mitigations, and mathematical solvency invariants.
 
 ---

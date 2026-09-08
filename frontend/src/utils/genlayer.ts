@@ -72,6 +72,10 @@ export async function readBountiesFromChain(
         ai_verdict: item.ai_verdict || '',
         ai_reason: item.ai_reason || '',
         confidence: String(item.confidence || '0'),
+        payout_ready_at: String(item.payout_ready_at || '0'),
+        deadline: String(item.deadline || '0'),
+        code_hash: String(item.code_hash || ''),
+        disputed: Boolean(item.disputed),
       }));
     }
     return [];

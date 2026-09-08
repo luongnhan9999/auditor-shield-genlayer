@@ -228,8 +228,9 @@ def test_submit_report_execution():
 
 
 def test_payout_settlement_transfers():
-    """Verify PAYOUT transfers 100% of escrow reward to whitehat and closes bounty."""
+    """Verify PAYOUT sets AWAITING_PAYOUT cooling-off window and finalize_settlement transfers 100%."""
     contract = ContractClass()
+    contract.platform_admin = "0xadmin"
     contract.bounties["1"] = BountyClass(
         owner=Address("0xowner"),
         whitehat=Address("0xwhitehat"),
@@ -240,7 +241,11 @@ def test_payout_settlement_transfers():
         status="EVALUATING",
         ai_verdict="",
         ai_reason="",
-        confidence=u256(0)
+        confidence=u256(0),
+        payout_ready_at=u256(0),
+        deadline=u256(1800000000),
+        code_hash="",
+        disputed=False
     )
 
     # Mock success payload
@@ -250,18 +255,27 @@ def test_payout_settlement_transfers():
     contract.adjudicate_report("1")
     
     bounty = contract.bounties["1"]
-    assert bounty.status == "CLOSED"
+    # Verify 24h Cooling-Off window state
+    assert bounty.status == "AWAITING_PAYOUT"
     assert bounty.ai_verdict == "PAYOUT"
+    assert bounty.payout_ready_at > 0
+    assert len(gl_inst.get_contract_at(Address("0xwhitehat")).transfers) == 0
+
+    # Finalize settlement (authorized caller)
+    gl_inst.message.sender_address = Address("0xadmin")
+    contract.finalize_settlement("1")
+    assert contract.bounties["1"].status == "CLOSED"
     
     # Verify balance transfer to whitehat contract address
     whitehat_contract = gl_inst.get_contract_at(Address("0xwhitehat"))
     assert 1000 in whitehat_contract.transfers
-    print("[OK] Test 3: PAYOUT transfers 100% escrow to whitehat and closes bounty")
+    print("[OK] Test 3: PAYOUT locks into 24h AWAITING_PAYOUT cooling-off and finalizes 100% transfer")
 
 
 def test_partial_settlement_transfers():
-    """Verify PARTIAL transfers 25% to whitehat and 75% back to owner with no leak."""
+    """Verify PARTIAL enters AWAITING_PAYOUT and transfers 25%/75% split upon finalization."""
     contract = ContractClass()
+    contract.platform_admin = "0xadmin"
     contract.bounties["1"] = BountyClass(
         owner=Address("0xowner"),
         whitehat=Address("0xwhitehat"),
@@ -272,7 +286,11 @@ def test_partial_settlement_transfers():
         status="EVALUATING",
         ai_verdict="",
         ai_reason="",
-        confidence=u256(0)
+        confidence=u256(0),
+        payout_ready_at=u256(0),
+        deadline=u256(1800000000),
+        code_hash="",
+        disputed=False
     )
 
     gl_inst.nondet.prompt_result = {"canary": "CANARY_AUTH_SECURE_VERIFIED", "verdict": "PARTIAL", "confidence": 90, "reason": "Informational issue"}
@@ -281,15 +299,19 @@ def test_partial_settlement_transfers():
     contract.adjudicate_report("1")
     
     bounty = contract.bounties["1"]
-    assert bounty.status == "CLOSED"
+    assert bounty.status == "AWAITING_PAYOUT"
     assert bounty.ai_verdict == "PARTIAL"
+
+    gl_inst.message.sender_address = Address("0xadmin")
+    contract.finalize_settlement("1")
+    assert contract.bounties["1"].status == "CLOSED"
     
     whitehat_contract = gl_inst.get_contract_at(Address("0xwhitehat"))
     owner_contract = gl_inst.get_contract_at(Address("0xowner"))
     
     assert 250 in whitehat_contract.transfers  # 25% of 1000
     assert 750 in owner_contract.transfers     # 75% of 1000
-    print("[OK] Test 4: PARTIAL transfers correct split (25% whitehat, 75% owner)")
+    print("[OK] Test 4: PARTIAL cooling-off transfers correct split (25% whitehat, 75% owner)")
 
 
 def test_reject_settlement_storage():
@@ -488,6 +510,72 @@ def test_prompt_injection_sanitization():
     print("[OK] Test 10: Input sanitization successfully neutralizes adversarial injection strings")
 
 
+def test_24h_dispute_window_lock():
+    """Verify that raising a dispute freezes status to DISPUTED and prevents premature finalization."""
+    contract = ContractClass()
+    contract.platform_admin = "0xadmin"
+    contract.bounties["1"] = BountyClass(
+        owner=Address("0xowner"),
+        whitehat=Address("0xwhitehat"),
+        reward_amount=u256(1000),
+        code_url="https://code",
+        focus_area="Focus",
+        report_url="https://report",
+        status="AWAITING_PAYOUT",
+        ai_verdict="PAYOUT",
+        ai_reason="Valid vulnerability",
+        confidence=u256(95),
+        payout_ready_at=u256(1780000000), # future timestamp
+        deadline=u256(1900000000),
+        code_hash="",
+        disputed=False
+    )
+
+    # Owner raises dispute during the 24h window
+    gl_inst.message.sender_address = Address("0xowner")
+    contract.raise_dispute("1", "False positive reentrancy claim")
+    assert contract.bounties["1"].status == "DISPUTED"
+    assert contract.bounties["1"].disputed is True
+    assert "False positive" in contract.bounties["1"].ai_reason
+
+    # Premature finalization attempt must revert
+    try:
+        contract.finalize_settlement("1")
+        assert False, "Should raise UserError when settling a DISPUTED bounty"
+    except UserError:
+        pass
+    print("[OK] Test 11: 24h Dispute window successfully freezes funds into DISPUTED status")
+
+
+def test_recover_stuck_funds_after_deadline():
+    """Verify project owner can recover escrow if bounty remains OPEN past the deadline."""
+    contract = ContractClass()
+    contract.platform_admin = "0xadmin"
+    contract.bounties["1"] = BountyClass(
+        owner=Address("0xowner"),
+        whitehat=Address("0x0000000000000000000000000000000000000000"),
+        reward_amount=u256(5000),
+        code_url="https://code",
+        focus_area="Focus",
+        report_url="",
+        status="OPEN",
+        ai_verdict="",
+        ai_reason="",
+        confidence=u256(0),
+        payout_ready_at=u256(0),
+        deadline=u256(1700000000), # past deadline
+        code_hash="",
+        disputed=False
+    )
+
+    gl_inst.contracts.clear()
+    gl_inst.message.sender_address = Address("0xowner")
+    contract.recover_stuck_funds("1")
+    assert contract.bounties["1"].status == "CLOSED"
+    assert 5000 in gl_inst.get_contract_at(Address("0xowner")).transfers
+    print("[OK] Test 12: Project owner successfully reclaims stuck escrow after deadline")
+
+
 if __name__ == "__main__":
     test_create_bounty_execution()
     test_submit_report_execution()
@@ -499,6 +587,8 @@ if __name__ == "__main__":
     test_verdict_confidence_constraints()
     test_prompt_injection_canary_defense()
     test_prompt_injection_sanitization()
+    test_24h_dispute_window_lock()
+    test_recover_stuck_funds_after_deadline()
     print("\n==================================================")
-    print("[OK] ALL 10 CONTRACT-LEVEL TESTS COMPLETED SUCCESSFULLY!")
+    print("[OK] ALL 12 CONTRACT-LEVEL TESTS COMPLETED SUCCESSFULLY!")
     print("==================================================")
