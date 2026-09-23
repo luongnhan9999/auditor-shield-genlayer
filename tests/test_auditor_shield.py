@@ -115,6 +115,23 @@ class MockGL:
         self.nondet = MockNondet()
         self.vm = self
         self.contracts = {}
+        self.current_timestamp = 1788881400  # Default 2026-09-08T15:30:00Z
+        self._update_message_raw()
+
+    def set_time(self, timestamp: int):
+        self.current_timestamp = int(timestamp)
+        self._update_message_raw()
+
+    def clear_time(self):
+        self.message_raw = None
+
+    def set_invalid_time(self):
+        self.message_raw = {"datetime": "invalid-datetime-format"}
+
+    def _update_message_raw(self):
+        from datetime import datetime, timezone
+        dt = datetime.fromtimestamp(self.current_timestamp, tz=timezone.utc)
+        self.message_raw = {"datetime": dt.strftime("%Y-%m-%dT%H:%M:%SZ")}
 
     def get_contract_at(self, address):
         addr_str = str(address).lower()
@@ -261,7 +278,8 @@ def test_payout_settlement_transfers():
     assert bounty.payout_ready_at > 0
     assert len(gl_inst.get_contract_at(Address("0xwhitehat")).transfers) == 0
 
-    # Finalize settlement (authorized caller)
+    # Finalize settlement strictly after cooling-off window
+    gl_inst.set_time(int(bounty.payout_ready_at) + 1)
     gl_inst.message.sender_address = Address("0xadmin")
     contract.finalize_settlement("1")
     assert contract.bounties["1"].status == "CLOSED"
@@ -302,6 +320,7 @@ def test_partial_settlement_transfers():
     assert bounty.status == "AWAITING_PAYOUT"
     assert bounty.ai_verdict == "PARTIAL"
 
+    gl_inst.set_time(int(bounty.payout_ready_at) + 1)
     gl_inst.message.sender_address = Address("0xadmin")
     contract.finalize_settlement("1")
     assert contract.bounties["1"].status == "CLOSED"
@@ -568,12 +587,160 @@ def test_recover_stuck_funds_after_deadline():
         disputed=False
     )
 
+    # Ensure runtime time is strictly past deadline
+    gl_inst.set_time(1789486201)
     gl_inst.contracts.clear()
     gl_inst.message.sender_address = Address("0xowner")
     contract.recover_stuck_funds("1")
     assert contract.bounties["1"].status == "CLOSED"
     assert 5000 in gl_inst.get_contract_at(Address("0xowner")).transfers
     print("[OK] Test 12: Project owner successfully reclaims stuck escrow after deadline")
+
+
+def test_early_admin_release_reverts():
+    """Verify that administrator CANNOT bypass the 24h cooling-off timelock early."""
+    contract = ContractClass()
+    contract.platform_admin = "0xadmin"
+    
+    now_ts = 1788881400
+    gl_inst.set_time(now_ts)
+    payout_time = u256(now_ts + 86400) # 24 hours later
+    
+    contract.bounties["1"] = BountyClass(
+        owner=Address("0xowner"),
+        whitehat=Address("0xwhitehat"),
+        reward_amount=u256(1000),
+        code_url="https://code",
+        focus_area="Focus",
+        report_url="https://report",
+        status="AWAITING_PAYOUT",
+        ai_verdict="PAYOUT",
+        ai_reason="Valid vulnerability",
+        confidence=u256(95),
+        payout_ready_at=payout_time,
+        deadline=u256(now_ts + 604800),
+        code_hash="",
+        disputed=False
+    )
+    
+    # Platform admin attempts early release at now_ts + 3600 (only 1 hour in)
+    gl_inst.set_time(now_ts + 3600)
+    gl_inst.message.sender_address = Address("0xadmin")
+    gl_inst.contracts.clear()
+    
+    try:
+        contract.finalize_settlement("1")
+        assert False, "Should raise UserError: admin must not bypass cooling-off window"
+    except UserError as e:
+        assert "24-hour cooling-off dispute period has not elapsed yet" in str(e)
+    
+    # Verify no funds were released and status remains unchanged
+    assert contract.bounties["1"].status == "AWAITING_PAYOUT"
+    assert len(gl_inst.get_contract_at(Address("0xwhitehat")).transfers) == 0
+    print("[OK] Test 13: Administrator early release attempt strictly reverts during cooling-off window")
+
+
+def test_deadline_boundary_recovery():
+    """Verify exact boundary enforcement on deadline for recovering stuck funds."""
+    contract = ContractClass()
+    deadline_ts = 1789486200
+    
+    contract.bounties["1"] = BountyClass(
+        owner=Address("0xowner"),
+        whitehat=Address("0x0000000000000000000000000000000000000000"),
+        reward_amount=u256(5000),
+        code_url="https://code",
+        focus_area="Focus",
+        report_url="",
+        status="OPEN",
+        ai_verdict="",
+        ai_reason="",
+        confidence=u256(0),
+        payout_ready_at=u256(0),
+        deadline=u256(deadline_ts),
+        code_hash="",
+        disputed=False
+    )
+    
+    gl_inst.message.sender_address = Address("0xowner")
+    gl_inst.contracts.clear()
+    
+    # Boundary 1: now = deadline - 1 (before deadline) -> MUST REVERT
+    gl_inst.set_time(deadline_ts - 1)
+    try:
+        contract.recover_stuck_funds("1")
+        assert False, "Should raise UserError when now < deadline"
+    except UserError as e:
+        assert "Bounty deadline has not elapsed yet" in str(e)
+    assert contract.bounties["1"].status == "OPEN"
+    
+    # Boundary 2: now = deadline (exact boundary) -> MUST REVERT (now <= deadline)
+    gl_inst.set_time(deadline_ts)
+    try:
+        contract.recover_stuck_funds("1")
+        assert False, "Should raise UserError at exact deadline boundary (now == deadline)"
+    except UserError as e:
+        assert "Bounty deadline has not elapsed yet" in str(e)
+    assert contract.bounties["1"].status == "OPEN"
+    
+    # Boundary 3: now = deadline + 1 (past deadline) -> MUST SUCCEED
+    gl_inst.set_time(deadline_ts + 1)
+    contract.recover_stuck_funds("1")
+    assert contract.bounties["1"].status == "CLOSED"
+    assert 5000 in gl_inst.get_contract_at(Address("0xowner")).transfers
+    print("[OK] Test 14: Deadline boundary recovery verified: [deadline - 1 (revert), deadline (revert), deadline + 1 (success)]")
+
+
+def test_unavailable_runtime_time_fails_closed():
+    """Verify that contract fails closed (reverts) whenever trusted runtime time is missing or unparseable."""
+    contract = ContractClass()
+    contract.platform_admin = "0xadmin"
+    gl_inst.message.sender_address = Address("0xowner")
+    gl_inst.message.value = u256(1000)
+    
+    # Case A: message_raw is None / missing
+    gl_inst.clear_time()
+    try:
+        contract.create_bounty("https://github.com/code", "Security")
+        assert False, "Should raise UserError when runtime time is missing"
+    except UserError as e:
+        assert "Trusted runtime time unavailable" in str(e)
+        
+    # Case B: message_raw contains malformed datetime
+    gl_inst.set_invalid_time()
+    try:
+        contract.create_bounty("https://github.com/code", "Security")
+        assert False, "Should raise UserError when runtime datetime is malformed"
+    except UserError as e:
+        assert "Trusted runtime time unavailable" in str(e)
+        
+    # Case C: finalize_settlement fails closed when time is unavailable
+    contract.bounties["1"] = BountyClass(
+        owner=Address("0xowner"),
+        whitehat=Address("0xwhitehat"),
+        reward_amount=u256(1000),
+        code_url="https://code",
+        focus_area="Focus",
+        report_url="https://report",
+        status="AWAITING_PAYOUT",
+        ai_verdict="PAYOUT",
+        ai_reason="Valid",
+        confidence=u256(95),
+        payout_ready_at=u256(1788881400),
+        deadline=u256(1789486200),
+        code_hash="",
+        disputed=False
+    )
+    gl_inst.clear_time()
+    try:
+        contract.finalize_settlement("1")
+        assert False, "Should raise UserError in finalize_settlement when time is unavailable"
+    except UserError as e:
+        assert "Trusted runtime time unavailable" in str(e)
+
+    # Restore valid runtime time for subsequent tests
+    gl_inst.set_time(1788881400)
+    print("[OK] Test 15: Fail-closed invariant verified: missing or malformed runtime time strictly reverts")
 
 
 if __name__ == "__main__":
@@ -589,6 +756,9 @@ if __name__ == "__main__":
     test_prompt_injection_sanitization()
     test_24h_dispute_window_lock()
     test_recover_stuck_funds_after_deadline()
+    test_early_admin_release_reverts()
+    test_deadline_boundary_recovery()
+    test_unavailable_runtime_time_fails_closed()
     print("\n==================================================")
-    print("[OK] ALL 12 CONTRACT-LEVEL TESTS COMPLETED SUCCESSFULLY!")
+    print("[OK] ALL 15 CONTRACT-LEVEL TESTS COMPLETED SUCCESSFULLY!")
     print("==================================================")

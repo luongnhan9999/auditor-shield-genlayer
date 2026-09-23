@@ -45,11 +45,15 @@ Evaluating whether a complex security report accurately identifies a vulnerabili
 
 ---
 
-## 🛡️ Milestone Progress (v1.1.0 Upgrade)
-- **AI Enhancement**: Upgraded GenVM prompt to a 3-lens multi-perspective evaluation schema.
-- **Security Hardening**: Integrated canary token protocol and adversarial input sanitization against prompt injection.
-- **Test Suite**: 12/12 automated contract execution tests passing (including prompt injection and dispute window verification).
-- **Documentation**: Added [`SECURITY.md`](file:///c:/Users/Admin/Documents/genlayer/AuditorShield/SECURITY.md) and [`CHANGELOG.md`](file:///c:/Users/Admin/Documents/genlayer/AuditorShield/CHANGELOG.md).
+## 🛡️ Milestone Progress (v1.1.1 Upgrade & Steward Remediation)
+- **Cooling-Off Invariant**: 24-hour timelock (`AWAITING_PAYOUT`) enforced on all parties, including administrator (no early release).
+- **Trusted Runtime Time**: Evaluates strictly from `gl.message_raw["datetime"]` and fails closed on unverified/missing time.
+- **Strict Boundary Recovery**: `recover_stuck_funds()` enforced at exact `deadline + 1` boundary.
+- **AI Enhancement**: Multi-perspective 3-lens evaluation prompt without code truncation.
+- **Security Hardening**: Integrated canary token protocol (`CANARY_AUTH_SECURE_VERIFIED`) and adversarial input sanitization.
+- **Test Suite**: 15/15 automated contract execution tests passing (covering early admin release, deadline boundary, and unavailable time).
+- **Snapshot Comparison**: [`docs/MILESTONE_COMPARISON.md`](file:///c:/Users/Admin/Documents/genlayer/AuditorShield/docs/MILESTONE_COMPARISON.md) and [Git Diff Comparison](https://github.com/luongnhan9999/auditor-shield-genlayer/compare/v1.0.0-accepted...main).
+- **Documentation**: [`SECURITY.md`](file:///c:/Users/Admin/Documents/genlayer/AuditorShield/SECURITY.md) and [`CHANGELOG.md`](file:///c:/Users/Admin/Documents/genlayer/AuditorShield/CHANGELOG.md).
 
 ---
 

@@ -37,7 +37,8 @@ class Contract(gl.Contract):
     # ── Helpers ──────────────────────────────────────────────
 
     def _get_current_timestamp(self) -> u256:
-        """Derive trusted execution timestamp strictly from transaction context."""
+        """Derive trusted execution timestamp strictly from runtime context.
+        Fails closed (reverts) if trusted runtime time is unavailable."""
         if hasattr(gl, "message_raw") and isinstance(gl.message_raw, dict):
             dt_raw = gl.message_raw.get("datetime", None)
             if dt_raw:
@@ -49,7 +50,7 @@ class Contract(gl.Contract):
                         return u256(ts)
                 except Exception:
                     pass
-        return u256(1770000000)
+        raise UserError("Trusted runtime time unavailable")
 
     def _extract_pinned_hash(self, url: str) -> str:
         """Detect if URL is pinned to an immutable 40-char commit SHA or IPFS hash."""
@@ -333,7 +334,8 @@ Respond ONLY with a JSON object in this exact schema:
 
     @gl.public.write
     def finalize_settlement(self, bounty_id: str) -> None:
-        """Disburses bounty funds strictly after the 24h dispute window when undisputed."""
+        """Disburses bounty funds strictly after the 24h dispute window when undisputed.
+        Applies unconditionally to all callers, including administrator (no early release)."""
         if bounty_id not in self.bounties:
             raise UserError("Bounty does not exist")
         bounty = self.bounties[bounty_id]
@@ -341,8 +343,7 @@ Respond ONLY with a JSON object in this exact schema:
             raise UserError("Bounty is not awaiting payout or is currently disputed")
 
         now = self._get_current_timestamp()
-        caller = str(gl.message.sender_address).lower()
-        if now < bounty.payout_ready_at and caller != self.platform_admin:
+        if now < bounty.payout_ready_at:
             raise UserError("24-hour cooling-off dispute period has not elapsed yet")
 
         amount = bounty.reward_amount
@@ -373,7 +374,7 @@ Respond ONLY with a JSON object in this exact schema:
             raise UserError("Can only recover stuck funds from OPEN bounties")
 
         now = self._get_current_timestamp()
-        if now <= bounty.deadline and caller != self.platform_admin:
+        if now <= bounty.deadline:
             raise UserError("Bounty deadline has not elapsed yet")
 
         amount = bounty.reward_amount

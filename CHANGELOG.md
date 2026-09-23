@@ -5,6 +5,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [v1.1.1] — Milestone Remediation & Invariant Hardening
+*Date: 2026-09-23* (Remediation for Steward Joaquin Review)
+
+### 🔒 Security & Invariant Hardening
+- **Fail-Closed Runtime Time**: `_get_current_timestamp` now strictly parses `gl.message_raw["datetime"]` (ISO-8601 UTC) and immediately fails closed (`raise UserError("Trusted runtime time unavailable")`) if time is absent or malformed. Simulated fallback has been completely removed.
+- **Strict Administrator Timelock Invariant**: Removed administrator bypass from `finalize_settlement()`. The 24-hour cooling-off window strictly applies to **all callers, including the platform administrator** (`now < bounty.payout_ready_at` reverts unconditionally).
+- **Strict Deadline Boundary**: In `recover_stuck_funds()`, boundary condition `now <= bounty.deadline` is strictly enforced. Renders early reclamation attempts invalid at both `deadline - 1` and `deadline`, succeeding only strictly after `deadline + 1`.
+- **Contract Test Suite Expanded to 15/15**: Added automated tests for:
+  1. Early administrator release attempt (reverts during cooling-off window).
+  2. Deadline boundary enforcement (`deadline - 1`, `deadline`, and `deadline + 1`).
+  3. Unavailable/malformed runtime time fail-closed behavior.
+- **Milestone Comparison Documentation**: Published `docs/MILESTONE_COMPARISON.md` comparing the immutable accepted snapshot (`v1.0.0-accepted`) with this milestone update (`v1.1.1`).
+
+---
+
 ## [v1.1.0] — Milestone 1: AI Enhancement & Security Hardening Bundle
 *Date: 2026-09-08*
 
